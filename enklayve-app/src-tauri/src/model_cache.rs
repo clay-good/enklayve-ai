@@ -529,7 +529,7 @@ impl CachedModel {
             LlamaSampler::temp(0.5), // Balanced temp for natural, intelligent responses
             LlamaSampler::top_k(40), // Focused diversity for quality
             LlamaSampler::top_p(0.9, 1), // Slightly tighter for coherence
-            LlamaSampler::penalties(256, 1.1, 0.0, 0.95), // Moderate penalties for natural flow
+            LlamaSampler::penalties(self.model.n_vocab(), 256, 1.1, 0.0, 0.95), // Moderate penalties for natural flow
             LlamaSampler::dist(42),
         ]);
 
