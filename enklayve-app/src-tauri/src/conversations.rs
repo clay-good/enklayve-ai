@@ -452,12 +452,17 @@ fn format_timestamp(timestamp: i64) -> String {
 /// Auto-generate conversation title from first message
 pub fn auto_generate_title(content: &str) -> String {
     let words: Vec<&str> = content.split_whitespace().collect();
+    if words.is_empty() {
+        return "New Conversation".to_string();
+    }
+
+    let truncated_by_word_count = words.len() > 6;
     let preview: String = words.iter().take(6).cloned().collect::<Vec<_>>().join(" ");
 
     if preview.len() > 50 {
         format!("{}...", &preview[..47])
-    } else if preview.is_empty() {
-        "New Conversation".to_string()
+    } else if truncated_by_word_count {
+        format!("{}...", preview)
     } else {
         preview
     }
@@ -470,6 +475,15 @@ mod tests {
     fn create_test_db() -> Result<Connection> {
         let conn = Connection::open_in_memory()?;
         init_conversation_tables(&conn)?;
+        // Production adds these message columns via the encryption migration
+        // (encrypted_database::initialize_encryption_support), which
+        // get_conversation_messages reads. Mirror that here so the test schema
+        // matches production.
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN is_encrypted BOOLEAN NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute("ALTER TABLE messages ADD COLUMN encrypted_content BLOB", [])?;
         Ok(conn)
     }
 

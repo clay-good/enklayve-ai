@@ -415,43 +415,56 @@ mod tests {
     #[test]
     fn test_migration() {
         let conn = create_test_db().unwrap();
-
-        // Store unencrypted chunk
-        let chunk_text = "Unencrypted data";
-        let embedding = vec![1.0, 2.0, 3.0];
-
-        store_encrypted_chunk(&conn, 1, chunk_text, &embedding, 0, None).unwrap();
-
-        // Check stats
-        let (total, encrypted) = get_encryption_stats(&conn).unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(encrypted, 0);
-
-        // Migrate to encrypted
         let salt = EncryptionKey::generate_salt();
         let key = EncryptionKey::from_password("migration_key", &salt).unwrap();
+
+        // --- migrate_to_encrypted operates on the messages table ---
+        conn.execute(
+            "CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                content TEXT NOT NULL,
+                is_encrypted BOOLEAN NOT NULL DEFAULT 0,
+                encrypted_content BLOB
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (content) VALUES ('a secret message')",
+            [],
+        )
+        .unwrap();
 
         let migrated = migrate_to_encrypted(&conn, &key).unwrap();
         assert_eq!(migrated, 1);
 
-        // Check stats again
+        let is_encrypted: i64 = conn
+            .query_row("SELECT is_encrypted FROM messages WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(is_encrypted, 1);
+
+        // --- migrate_to_unencrypted operates on the chunks table ---
+        let chunk_text = "Encrypted data";
+        let embedding = vec![1.0, 2.0, 3.0];
+        store_encrypted_chunk(&conn, 1, chunk_text, &embedding, 0, Some(&key)).unwrap();
+
         let (total, encrypted) = get_encryption_stats(&conn).unwrap();
         assert_eq!(total, 1);
         assert_eq!(encrypted, 1);
 
-        // Retrieve decrypted
-        let (decrypted_text, decrypted_embedding) =
-            retrieve_encrypted_chunk(&conn, 1, Some(&key)).unwrap();
-        assert_eq!(decrypted_text, chunk_text);
-        assert_eq!(decrypted_embedding, embedding);
-
-        // Migrate back to unencrypted
         let migrated = migrate_to_unencrypted(&conn, &key).unwrap();
         assert_eq!(migrated, 1);
 
-        // Check final stats
         let (total, encrypted) = get_encryption_stats(&conn).unwrap();
         assert_eq!(total, 1);
         assert_eq!(encrypted, 0);
+
+        // The chunk is now readable without a key.
+        let (decrypted_text, decrypted_embedding) =
+            retrieve_encrypted_chunk(&conn, 1, None).unwrap();
+        assert_eq!(decrypted_text, chunk_text);
+        assert_eq!(decrypted_embedding, embedding);
     }
 }
