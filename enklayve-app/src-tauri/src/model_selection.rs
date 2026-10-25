@@ -13,27 +13,27 @@ pub fn get_best_model_for_hardware(hardware: &HardwareProfile) -> BestModelSelec
 
     let (model_name, explanation_reason) = if ram_gb >= 64.0 {
         (
-            "Qwen 2.5 32B Instruct (Q4)",
+            "Qwen3 32B (Q4)",
             "maximum intelligence for your high-end system"
         )
     } else if ram_gb >= 32.0 {
         (
-            "Qwen 2.5 14B Instruct (Q4)",
+            "Qwen3 14B (Q4)",
             "very smart model for your system"
         )
     } else if ram_gb >= 16.0 {
         (
-            "Qwen 2.5 7B Instruct (Q3)",
+            "Qwen3 8B (Q4)",
             "balanced intelligence and speed - recommended for most users"
         )
     } else if ram_gb >= 8.0 {
         (
-            "Qwen 2.5 3B Instruct (Q4)",
+            "Qwen3 4B (Q4)",
             "fast and efficient for your system"
         )
     } else {
         (
-            "Qwen 2.5 1.5B Instruct (Q4)",
+            "Qwen3 1.7B (Q4)",
             "lightweight model for minimal hardware"
         )
     };
@@ -57,13 +57,13 @@ fn find_model_by_name(name: &str) -> Option<ModelInfo> {
 
 fn get_fallback_model() -> ModelInfo {
     ModelInfo {
-        name: "Qwen 2.5 7B Instruct (Q3)".to_string(),
+        name: "Qwen3 8B (Q4)".to_string(),
         description: "Balanced intelligence and speed - recommended for most users".to_string(),
-        size_gb: 3.5,
+        size_gb: 4.7,
         min_ram_gb: 8,
         recommended_ram_gb: 16,
-        repo_url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF".to_string(),
-        file_name: "qwen2.5-7b-instruct-q3_k_m.gguf".to_string(),
+        repo_url: "https://huggingface.co/unsloth/Qwen3-8B-GGUF".to_string(),
+        file_name: "Qwen3-8B-Q4_K_M.gguf".to_string(),
         checksum: "".to_string(),
         recommended_use: "Complex reasoning, technical docs, code analysis, mathematics, research".to_string(),
         performance_tier: "Balanced".to_string(),
@@ -114,14 +114,14 @@ mod tests {
     fn test_mid_range_selection() {
         let hardware = create_test_hardware(16.0);
         let selection = get_best_model_for_hardware(&hardware);
-        assert!(selection.model.name.contains("7B"));
+        assert!(selection.model.name.contains("8B"));
     }
 
     #[test]
     fn test_low_end_selection() {
         let hardware = create_test_hardware(8.0);
         let selection = get_best_model_for_hardware(&hardware);
-        assert!(selection.model.name.contains("3B"));
+        assert!(selection.model.name.contains("4B"));
         assert!(selection.model.size_gb <= 2.5);
     }
 
@@ -129,7 +129,7 @@ mod tests {
     fn test_minimal_selection() {
         let hardware = create_test_hardware(4.0);
         let selection = get_best_model_for_hardware(&hardware);
-        assert!(selection.model.name.contains("1.5B"));
+        assert!(selection.model.name.contains("1.7B"));
         assert!(selection.model.size_gb <= 1.5);
     }
 }

@@ -68,8 +68,8 @@ impl ModelDownloader {
         // If URL is a repo URL (https://huggingface.co/org/repo), convert to download URL
         let download_url = if url.contains("huggingface.co") && !url.contains("/resolve/") {
             // Convert repo URL to download URL
-            // From: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF
-            // To: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m.gguf
+            // From: https://huggingface.co/unsloth/Qwen3-14B-GGUF
+            // To: https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf
             format!("{}/resolve/main/{}", url.trim_end_matches('/'), model_name)
         } else {
             url.to_string()
