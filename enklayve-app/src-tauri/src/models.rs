@@ -39,27 +39,27 @@ pub struct ModelRecommendation {
 pub fn get_available_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
-            name: "Qwen 2.5 1.5B Instruct (Q4)".to_string(),
-            description: "Ultra-efficient model for minimal hardware - perfect for basic Q&A".to_string(),
+            name: "Qwen3 1.7B (Q4)".to_string(),
+            description: "Ultra-efficient reasoning model for minimal hardware - perfect for basic Q&A".to_string(),
             size_gb: 1.0,
             min_ram_gb: 4,
             recommended_ram_gb: 6,
-            repo_url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF".to_string(),
-            file_name: "qwen2.5-1.5b-instruct-q4_k_m.gguf".to_string(),
+            repo_url: "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF".to_string(),
+            file_name: "Qwen3-1.7B-Q4_K_M.gguf".to_string(),
             checksum: "".to_string(),
             recommended_use: "Fast responses, simple document Q&A, basic summarization".to_string(),
             performance_tier: "Fast".to_string(),
-            estimated_speed_tokens_per_sec: 80,
+            estimated_speed_tokens_per_sec: 85,
             context_length: 32768,
         },
         ModelInfo {
-            name: "Qwen 2.5 3B Instruct (Q4)".to_string(),
-            description: "Fast and efficient model with strong reasoning for most tasks".to_string(),
-            size_gb: 1.9,
+            name: "Qwen3 4B (Q4)".to_string(),
+            description: "Fast and efficient reasoning model with strong performance for most tasks".to_string(),
+            size_gb: 2.3,
             min_ram_gb: 6,
             recommended_ram_gb: 8,
-            repo_url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF".to_string(),
-            file_name: "qwen2.5-3b-instruct-q4_k_m.gguf".to_string(),
+            repo_url: "https://huggingface.co/unsloth/Qwen3-4B-GGUF".to_string(),
+            file_name: "Qwen3-4B-Q4_K_M.gguf".to_string(),
             checksum: "".to_string(),
             recommended_use: "Document analysis, coding help, technical content, multilingual support".to_string(),
             performance_tier: "Fast".to_string(),
@@ -67,13 +67,13 @@ pub fn get_available_models() -> Vec<ModelInfo> {
             context_length: 32768,
         },
         ModelInfo {
-            name: "Qwen 2.5 7B Instruct (Q3)".to_string(),
+            name: "Qwen3 8B (Q4)".to_string(),
             description: "Balanced intelligence and speed - recommended for most users".to_string(),
-            size_gb: 3.5,
+            size_gb: 4.7,
             min_ram_gb: 8,
             recommended_ram_gb: 16,
-            repo_url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF".to_string(),
-            file_name: "qwen2.5-7b-instruct-q3_k_m.gguf".to_string(),
+            repo_url: "https://huggingface.co/unsloth/Qwen3-8B-GGUF".to_string(),
+            file_name: "Qwen3-8B-Q4_K_M.gguf".to_string(),
             checksum: "".to_string(),
             recommended_use: "Complex reasoning, technical docs, code analysis, mathematics, research".to_string(),
             performance_tier: "Balanced".to_string(),
@@ -81,13 +81,13 @@ pub fn get_available_models() -> Vec<ModelInfo> {
             context_length: 32768,
         },
         ModelInfo {
-            name: "Qwen 2.5 14B Instruct (Q4)".to_string(),
-            description: "Very smart model for advanced analysis and complex reasoning".to_string(),
-            size_gb: 8.7,
+            name: "Qwen3 14B (Q4)".to_string(),
+            description: "Very smart reasoning model for advanced analysis and complex tasks".to_string(),
+            size_gb: 8.4,
             min_ram_gb: 16,
             recommended_ram_gb: 32,
-            repo_url: "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF".to_string(),
-            file_name: "qwen2.5-14b-instruct-q4_k_m.gguf".to_string(),
+            repo_url: "https://huggingface.co/unsloth/Qwen3-14B-GGUF".to_string(),
+            file_name: "Qwen3-14B-Q4_K_M.gguf".to_string(),
             checksum: "".to_string(),
             recommended_use: "Advanced reasoning, professional writing, research, complex technical analysis".to_string(),
             performance_tier: "Smart".to_string(),
@@ -95,13 +95,13 @@ pub fn get_available_models() -> Vec<ModelInfo> {
             context_length: 32768,
         },
         ModelInfo {
-            name: "Qwen 2.5 32B Instruct (Q4)".to_string(),
+            name: "Qwen3 32B (Q4)".to_string(),
             description: "Maximum intelligence for the most demanding tasks and research".to_string(),
-            size_gb: 19.0,
+            size_gb: 18.4,
             min_ram_gb: 32,
             recommended_ram_gb: 64,
-            repo_url: "https://huggingface.co/Qwen/Qwen2.5-32B-Instruct-GGUF".to_string(),
-            file_name: "qwen2.5-32b-instruct-q4_k_m.gguf".to_string(),
+            repo_url: "https://huggingface.co/unsloth/Qwen3-32B-GGUF".to_string(),
+            file_name: "Qwen3-32B-Q4_K_M.gguf".to_string(),
             checksum: "".to_string(),
             recommended_use: "Expert-level analysis, complex research, advanced coding, scientific work".to_string(),
             performance_tier: "Maximum".to_string(),
@@ -281,10 +281,10 @@ mod tests {
     #[test]
     fn test_model_count() {
         let models = get_available_models();
-        assert_eq!(models.len(), 5, "Should have exactly 5 Qwen 2.5 models");
+        assert_eq!(models.len(), 5, "Should have exactly 5 Qwen3 models");
 
         for model in &models {
-            assert!(model.name.starts_with("Qwen 2.5"), "All models should be Qwen 2.5 series");
+            assert!(model.name.starts_with("Qwen3"), "All models should be Qwen3 series");
         }
     }
 

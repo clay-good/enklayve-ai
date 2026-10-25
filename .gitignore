@@ -91,9 +91,11 @@ coverage/
 # Rust-analyzer metadata/cache
 .rust-analyzer/
 
-# Generated dependency lock file (usually tracked, but sometimes ignored in small snippets)
-# Keeping the existing line, but note that Cargo.lock is typically committed in applications.
+# Cargo.lock is committed for this application so release builds are reproducible
+# (unpinned deps had drifted and broken fresh builds). Ignore stray lockfiles
+# elsewhere, but track the Tauri app's.
 Cargo.lock
+!/enklayve-app/src-tauri/Cargo.lock
 
 # Build artifacts and temporary files
 *.rs.bk
