@@ -1,8 +1,8 @@
 # Enklayve
 
-**100% Local, Always Free, AI-Powered Document Analysis**
+**Local-First, Always Free — Ask Your Data Anything**
 
-Enklayve is a secure, privacy-first desktop application that lets you chat with your documents using powerful AI models running entirely on your computer. No cloud services, no subscriptions, no data leaks.
+Enklayve is a secure, privacy-first desktop app that lets you ask your own documents anything, answered by AI models running entirely on your computer. No account, no setup, no cloud, no subscriptions. Install it, drop in a folder, and start chatting — or just chat, and (opt-in) let it browse the web. Think NotebookLM, but it runs on your machine and treats your files like a vault.
 
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/user/enklayve-dev)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -10,11 +10,11 @@ Enklayve is a secure, privacy-first desktop application that lets you chat with 
 
 ## Why Enklayve?
 
-- **100% Local Processing**: Everything runs on your device. No internet required.
+- **Zero Setup**: The app detects your hardware, picks the best-fit model, and installs it. No model pickers, no config, no terminal.
+- **Local-First & Private**: Everything runs on your device and is encrypted at rest. Fully offline by default — web access is strictly opt-in.
 - **Always Free**: No subscriptions, no hidden costs, no premium tiers.
-- **Private by Default**: Your documents never leave your computer.
-- **Powerful Models**: Run models like Qwen 2.5, Llama 3.2, Mistral locally.
-- **GPU Accelerated**: Automatic optimization for Apple Silicon and NVIDIA GPUs.
+- **Capable Models**: Runs modern local models (Qwen3-class) that are genuinely good at both answering from your documents and using tools.
+- **GPU Accelerated**: Automatic optimization for Apple Silicon (Metal) and NVIDIA (CUDA).
 
 ## Key Features
 
@@ -24,24 +24,29 @@ Enklayve is a secure, privacy-first desktop application that lets you chat with 
 - Zero-knowledge architecture
 - All data stays on your device
 
-### Document Intelligence
-- Upload PDFs, DOCX, TXT, Markdown, Excel files
-- Ask questions about your documents
-- Get answers with source citations
-- Vector search for relevant context
+### Ask Your Data
+- Drop in a folder or individual files (PDF, DOCX, TXT, Markdown, Excel, CSV, images via OCR)
+- Ask questions and get answers grounded in your documents
+- Source citations you can click to open the exact passage
+- Vector search + reranking for relevant context
+- Honest when the answer isn't in your data — no invented citations
+
+### A Tiny, Tasteful Agent
+- Retrieve from your documents
+- Fetch from the web — **opt-in and off by default**, with URL citations
+- Read/write inside **one folder you designate** (sandboxed)
+- No coding, no terminal, no OS automation — that's the whole toolset
+
+### Built to Not Break
+- Self-healing: resumable downloads, index rebuild, graceful out-of-memory recovery
+- Plain-language errors, never a raw stack trace
+- Robust ingestion with fallbacks and partial import, so one bad file never stops a batch
 
 ### Performance
-- Hardware-aware model recommendations
+- Hardware-aware, automatic model selection
 - Automatic GPU acceleration (Metal, CUDA)
 - Intelligent context window optimization
 - Fast embedding generation
-
-### User Experience
-- Simple mode for beginners
-- Advanced mode for power users
-- Conversation history
-- Export conversations with sources
-- Automatic backup and restore
 
 ## System Requirements
 
@@ -111,16 +116,16 @@ Enklayve is a secure, privacy-first desktop application that lets you chat with 
 
 ## Available Models
 
-Enklayve automatically recommends the best model based on your RAM:
+Enklayve automatically selects and installs the best-fit model for your machine — you don't choose one. Sizes shown are the current Qwen3-class defaults per RAM tier:
 
-| RAM | Recommended Model | Size | Performance |
-|-----|-------------------|------|-------------|
-| 8GB | Qwen 2.5 3B | 1.9GB | Fast, efficient |
-| 16GB | Qwen 2.5 7B | 4.4GB | Balanced, recommended |
-| 32GB | Qwen 2.5 14B | 8.7GB | Very smart |
-| 64GB+ | Qwen 2.5 32B | 19GB | Maximum intelligence |
+| RAM | Model class | Approx. size | Performance |
+|-----|-------------|--------------|-------------|
+| 8GB | ~3-4B | ~2-3GB | Fast, efficient |
+| 16GB | ~7-9B | ~5GB | Balanced, recommended |
+| 32GB | ~14B | ~9GB | Very smart |
+| 64GB+ | ~30B+ | ~19GB+ | Maximum intelligence |
 
-All models support 32K context window and run at 30-60 tokens/sec on modern hardware.
+Models run with GPU acceleration (Metal/CUDA) at interactive speeds on modern hardware. Exact model choices are maintained in the app and may update as better local models ship.
 
 ## Building from Source
 
@@ -219,7 +224,7 @@ xattr -r -d com.apple.quarantine /Applications/enklayve.app
 Models are large (1-20GB). Download times depend on your internet speed. Downloads can be resumed if interrupted.
 
 ### Out of memory during inference
-Try a smaller model. Qwen 2.5 3B works well on 8GB RAM systems.
+Switch to a smaller model — the ~3-4B tier works well on 8GB RAM systems.
 
 ### App crashes on startup
 Check system requirements. Ensure you have at least 8GB RAM and 10GB free disk space.
@@ -274,11 +279,17 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Roadmap
 
-- [ ] Image analysis
-- [ ] Voice input/output
-- [ ] Multiple document comparison
-- [ ] Plugin system
-- [ ] Mobile apps (iOS, Android)
+Enklayve is becoming the dead-simple, secure way to ask your data anything —
+a fully local NotebookLM plus a tiny, tasteful agent. The plan is sequenced in
+[ROADMAP.md](ROADMAP.md), with specs in [openspec/](openspec/):
+
+1. **Make the core flawless** — fix chat formatting (chat templates) and document ingestion (DOCX fallbacks, partial import).
+2. **Zero-setup onboarding** — auto-detect hardware, auto-install the best-fit model.
+3. **Ask your data, done well** — folder ingestion, grounded answers with clickable citations.
+4. **The minimal agent** — opt-in web browsing and a sandboxed working folder. No coding, no terminal, no OS automation.
+5. **Polish & trust** — self-healing, encrypted backup/restore, signed cross-platform releases.
+
+Desktop only (macOS, Windows, Linux). No mobile apps.
 
 ## Acknowledgments
 
