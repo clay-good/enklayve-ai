@@ -23,9 +23,15 @@ pub struct ModelDownloader {
 
 impl ModelDownloader {
     pub fn new() -> Result<Self> {
+        // Model files are multi-gigabyte, so we must NOT set an overall request
+        // timeout (that would cap the whole download and abort large models).
+        // Instead bound the connect phase and detect stalled transfers with a
+        // per-read inactivity timeout, which allows arbitrarily long downloads
+        // as long as bytes keep arriving.
         let client = Client::builder()
-            .user_agent("Enklayve/0.1.0")
-            .timeout(std::time::Duration::from_secs(300))
+            .user_agent(concat!("Enklayve/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .read_timeout(std::time::Duration::from_secs(120))
             .build()?;
 
         Ok(Self { client })
@@ -164,6 +170,21 @@ impl ModelDownloader {
                 return Err(e);
             }
         };
+
+        // Verify the whole file arrived: a dropped connection can end the
+        // stream early without erroring, leaving a truncated model on disk.
+        if total_size > 0 && downloaded != total_size {
+            crate::logger::log_error(&format!(
+                "Download incomplete: {} ({} of {} bytes)",
+                model_name, downloaded, total_size
+            ));
+            let _ = std::fs::remove_file(&file_path);
+            anyhow::bail!(
+                "Download incomplete: received {} of {} bytes",
+                downloaded,
+                total_size
+            );
+        }
 
         // Verify file was downloaded correctly
         if !is_valid_model_file(&file_path) {
@@ -307,18 +328,30 @@ pub async fn list_downloaded_models(app_handle: &AppHandle) -> Result<Vec<Downlo
     Ok(models)
 }
 
-/// Validate that a model file is not corrupted
-/// Minimum valid model size is 100 MB (for smallest quantized models)
+/// Validate that a model file is not corrupted.
+/// A valid file must be at least 100 MB (smallest quantized model) and begin
+/// with the GGUF magic bytes, which rejects HTML/JSON error responses that were
+/// mistakenly saved with a `.gguf` name.
 pub fn is_valid_model_file(file_path: &Path) -> bool {
     if !file_path.exists() {
         return false;
     }
 
-    if let Ok(metadata) = std::fs::metadata(file_path) {
-        const MIN_MODEL_SIZE: u64 = 100_000_000; // 100 MB
-        metadata.len() >= MIN_MODEL_SIZE
-    } else {
-        false
+    const MIN_MODEL_SIZE: u64 = 100_000_000; // 100 MB
+    match std::fs::metadata(file_path) {
+        Ok(metadata) if metadata.len() >= MIN_MODEL_SIZE => {}
+        _ => return false,
+    }
+
+    // GGUF files start with the ASCII magic "GGUF".
+    use std::io::Read;
+    const GGUF_MAGIC: &[u8; 4] = b"GGUF";
+    match std::fs::File::open(file_path) {
+        Ok(mut file) => {
+            let mut magic = [0u8; 4];
+            file.read_exact(&mut magic).is_ok() && &magic == GGUF_MAGIC
+        }
+        Err(_) => false,
     }
 }
 
