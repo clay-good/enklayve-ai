@@ -33,7 +33,7 @@ chrono = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Document processing
-pdf-extract = "0.7"
+pdf-extract = "0.12"
 docx-rs = "0.4"
 lopdf = "0.42"
 html2text = "0.12"
