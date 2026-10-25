@@ -19,8 +19,13 @@ export default defineConfig(async () => ({
     },
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
+        manualChunks(id) {
+          if (
+            id.includes("/node_modules/react/") ||
+            id.includes("/node_modules/react-dom/")
+          ) {
+            return "vendor";
+          }
         },
       },
     },
