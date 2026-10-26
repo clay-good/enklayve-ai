@@ -7,7 +7,7 @@ use llama_cpp_2::{
     model::{AddBos, LlamaModel, Special, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::num::NonZeroU32;
 use std::collections::hash_map::DefaultHasher;
@@ -158,9 +158,34 @@ struct PromptCacheEntry {
     cache_hits: u64,
 }
 
+/// The llama.cpp backend can only be initialized once per process; initializing
+/// it a second time (e.g. when switching models) returns BackendAlreadyInitialized.
+/// So it's a process-wide singleton that every loaded model shares.
+/// Wrapper so the backend can live in a `static` (same Send/Sync assumption the
+/// model cache already makes for the llama.cpp handles below).
+struct SharedBackend(LlamaBackend);
+unsafe impl Send for SharedBackend {}
+unsafe impl Sync for SharedBackend {}
+
+static BACKEND: OnceLock<SharedBackend> = OnceLock::new();
+
+fn shared_backend() -> Result<&'static LlamaBackend> {
+    if let Some(b) = BACKEND.get() {
+        return Ok(&b.0);
+    }
+    // Serialize initialization so two concurrent loads don't both call init().
+    static INIT_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = BACKEND.get() {
+        return Ok(&b.0);
+    }
+    let backend = LlamaBackend::init().context("Failed to initialize llama backend")?;
+    let _ = BACKEND.set(SharedBackend(backend)); // only fails if already set, just checked
+    Ok(&BACKEND.get().expect("backend set above").0)
+}
+
 /// A cached model with prompt cache tracking
 pub struct CachedModel {
-    backend: LlamaBackend,
     model: LlamaModel,
     _path: String,
     prompt_cache: Arc<Mutex<Option<PromptCacheEntry>>>,
@@ -175,8 +200,8 @@ impl CachedModel {
     pub fn load(path: &str) -> Result<Self> {
         crate::logger::log_info(&format!("Loading model into cache from: {}", path));
 
-        // Initialize backend
-        let backend = LlamaBackend::init()?;
+        // Shared, process-wide backend (init once; reused across model switches).
+        let backend = shared_backend()?;
 
         // Log GPU support
         #[cfg(target_os = "macos")]
@@ -222,7 +247,7 @@ impl CachedModel {
             .with_n_gpu_layers(gpu_layers)
             .with_use_mlock(false);  // Don't lock memory pages (allows system to manage RAM efficiently)
 
-        let model = LlamaModel::load_from_file(&backend, path, &model_params)
+        let model = LlamaModel::load_from_file(backend, path, &model_params)
             .context("Failed to load model")?;
 
         crate::logger::log_info(&format!(
@@ -231,7 +256,6 @@ impl CachedModel {
         ));
 
         Ok(CachedModel {
-            backend,
             model,
             _path: path.to_string(),
             prompt_cache: Arc::new(Mutex::new(None)),
@@ -310,7 +334,7 @@ impl CachedModel {
             .with_n_ctx(Some(NonZeroU32::new(8192).unwrap()))
             .with_n_batch(2048);
 
-        let mut context = self.model.new_context(&self.backend, ctx_params)
+        let mut context = self.model.new_context(shared_backend()?, ctx_params)
             .context("Failed to create context")?;
 
         // Tokenize the prompt
@@ -477,7 +501,7 @@ impl CachedModel {
             .with_n_ctx(Some(NonZeroU32::new(8192).unwrap()))
             .with_n_batch(2048);
 
-        let mut context = self.model.new_context(&self.backend, ctx_params)
+        let mut context = self.model.new_context(shared_backend()?, ctx_params)
             .context("Failed to create context")?;
 
         let tokens = self.model.str_to_token(prompt, AddBos::Always)
