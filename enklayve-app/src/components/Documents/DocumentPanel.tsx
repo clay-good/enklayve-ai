@@ -27,6 +27,8 @@ interface DocumentPanelProps {
   onUploadFolder: () => void;
   onRepairIndex: () => void;
   folderProgress: { processed: number; total: number; current_file: string } | null;
+  webAccess: string;
+  onToggleWeb: () => void;
 }
 
 export function DocumentPanel({
@@ -40,6 +42,8 @@ export function DocumentPanel({
   onUploadFolder,
   onRepairIndex,
   folderProgress,
+  webAccess,
+  onToggleWeb,
 }: DocumentPanelProps) {
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -69,6 +73,15 @@ export function DocumentPanel({
           </button>
           <button className="repair-button" onClick={onRepairIndex} title="Check and repair the search index">
             Repair
+          </button>
+          <button
+            className="repair-button"
+            onClick={onToggleWeb}
+            title={webAccess === 'enabled'
+              ? 'Web search is on — click to turn off'
+              : 'Web search is off — click to turn on'}
+          >
+            {webAccess === 'enabled' ? '🌐 On' : '🌐 Off'}
           </button>
         </div>
       </div>

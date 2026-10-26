@@ -6,6 +6,8 @@ mod models;
 mod inference;
 mod response_format;
 mod index_health;
+mod web;
+mod fs_sandbox;
 mod downloads;
 mod embeddings;
 mod vector_search;
@@ -106,6 +108,11 @@ pub fn run() {
             commands::upload_folder,
             commands::check_index_integrity,
             commands::rebuild_index,
+            commands::get_web_access,
+            commands::set_web_access,
+            commands::get_working_folder,
+            commands::set_working_folder,
+            commands::save_to_working_folder,
             commands::get_hardware_summary,
             commands::preload_model,
             commands::get_preload_status,

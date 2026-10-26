@@ -16,6 +16,8 @@ interface ChatWindowProps {
   onSubmit: () => void;
   onStop: () => void;
   onOpenCitation?: (fileName: string) => void;
+  onSaveMessage?: (content: string) => void;
+  webSearching?: boolean;
 }
 
 export function ChatWindow({
@@ -26,6 +28,8 @@ export function ChatWindow({
   onSubmit,
   onStop,
   onOpenCitation,
+  onSaveMessage,
+  webSearching = false,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
@@ -60,9 +64,9 @@ export function ChatWindow({
             <ul className="feature-list">
               <li>Chat freely - no documents required</li>
               <li>Upload documents (PDF, DOCX, TXT, MD) for intelligent Q&A</li>
-              <li>100% local processing - your data NEVER leaves your device</li>
-              <li>No internet required - works completely offline</li>
-              <li>No telemetry, no tracking, no API keys - fully private and free forever</li>
+              <li>Local processing - your documents NEVER leave your device</li>
+              <li>Works offline; optional web search sends only your question, never your documents</li>
+              <li>No telemetry, no tracking, no API keys - private and free forever</li>
             </ul>
           </div>
         ) : (
@@ -74,6 +78,11 @@ export function ChatWindow({
                 content={msg.content}
                 isStreaming={msg.isStreaming || false}
                 onOpenCitation={onOpenCitation}
+                onSave={
+                  msg.role === 'assistant' && onSaveMessage
+                    ? () => onSaveMessage(msg.content)
+                    : undefined
+                }
               />
             ))}
             {loading && (
@@ -83,7 +92,7 @@ export function ChatWindow({
                   <span></span>
                   <span></span>
                 </div>
-                <span className="loading-text">Processing locally...</span>
+                <span className="loading-text">{webSearching ? 'Searching the web…' : 'Processing locally...'}</span>
               </div>
             )}
             <div ref={messagesEndRef} />

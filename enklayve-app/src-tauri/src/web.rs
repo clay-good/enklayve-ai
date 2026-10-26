@@ -1,0 +1,198 @@
+//! Opt-in web access: a keyless search plus readable page fetch.
+//!
+//! Enklayve is local-first; this module is only ever reached when the user has
+//! turned web access on (see the `web_access` setting). Only the user's typed
+//! question is sent out — never their documents. HTML scraping of a third-party
+//! search page is inherently fragile and subject to that provider's terms, so
+//! the parser is isolated and unit-tested, and the provider is easy to swap.
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebResult {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+fn client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; Enklayve)")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .context("could not build web client")
+}
+
+/// Search the web via DuckDuckGo's keyless HTML endpoint.
+pub async fn search(query: &str, max_results: usize) -> Result<Vec<WebResult>> {
+    let resp = client()?
+        .get("https://html.duckduckgo.com/html/")
+        .query(&[("q", query)])
+        .send()
+        .await
+        .context("web search request failed")?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("web search returned status {}", resp.status());
+    }
+
+    let html = resp.text().await.context("could not read search response")?;
+    Ok(parse_duckduckgo_html(&html, max_results))
+}
+
+/// Fetch a page and return its readable text, truncated to `max_chars`.
+pub async fn fetch_readable(url: &str, max_chars: usize) -> Result<String> {
+    let resp = client()?
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("could not fetch {}", url))?;
+    let html = resp.text().await.context("could not read page body")?;
+    let mut text = html2text::from_read(html.as_bytes(), 100);
+    if text.len() > max_chars {
+        text.truncate(max_chars);
+    }
+    Ok(text)
+}
+
+/// Parse DuckDuckGo HTML result rows. Pure and unit-tested so the fragile part
+/// of web search can be verified without the network.
+pub fn parse_duckduckgo_html(html: &str, max_results: usize) -> Vec<WebResult> {
+    let link_re = regex::Regex::new(
+        r#"(?s)<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#,
+    )
+    .expect("valid regex");
+    let snip_re = regex::Regex::new(
+        r#"(?s)<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>"#,
+    )
+    .expect("valid regex");
+
+    let snippets: Vec<String> = snip_re
+        .captures_iter(html)
+        .map(|c| strip_html(&c[1]))
+        .collect();
+
+    let mut out = Vec::new();
+    for (i, cap) in link_re.captures_iter(html).enumerate() {
+        if out.len() >= max_results {
+            break;
+        }
+        let url = decode_result_href(&cap[1]);
+        let title = strip_html(&cap[2]);
+        if title.is_empty() || url.is_empty() {
+            continue;
+        }
+        let snippet = snippets.get(i).cloned().unwrap_or_default();
+        out.push(WebResult { title, url, snippet });
+    }
+    out
+}
+
+/// DuckDuckGo wraps result links as `//duckduckgo.com/l/?uddg=<encoded>&...`.
+fn decode_result_href(href: &str) -> String {
+    if let Some(idx) = href.find("uddg=") {
+        let rest = &href[idx + "uddg=".len()..];
+        let enc = rest.split('&').next().unwrap_or(rest);
+        return percent_decode(enc);
+    }
+    if let Some(stripped) = href.strip_prefix("//") {
+        format!("https://{}", stripped)
+    } else {
+        href.to_string()
+    }
+}
+
+/// Minimal percent-decoding (and `+` to space), enough for extracted URLs.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hi = (bytes[i + 1] as char).to_digit(16);
+                let lo = (bytes[i + 2] as char).to_digit(16);
+                if let (Some(h), Some(l)) = (hi, lo) {
+                    out.push((h * 16 + l) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(b'%');
+                i += 1;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Strip HTML tags and unescape the common entities, collapsing whitespace.
+fn strip_html(s: &str) -> String {
+    let tag_re = regex::Regex::new(r"(?s)<[^>]+>").expect("valid regex");
+    let no_tags = tag_re.replace_all(s, "");
+    let unescaped = no_tags
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&");
+    unescaped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_decode_basic() {
+        assert_eq!(percent_decode("https%3A%2F%2Fa.com%2Fx"), "https://a.com/x");
+        assert_eq!(percent_decode("a+b"), "a b");
+    }
+
+    #[test]
+    fn strip_html_tags_and_entities() {
+        assert_eq!(strip_html("<b>Hello</b> &amp; <i>bye</i>"), "Hello & bye");
+    }
+
+    #[test]
+    fn decode_ddg_wrapped_href() {
+        let href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&rut=abc";
+        assert_eq!(decode_result_href(href), "https://example.com/page");
+    }
+
+    #[test]
+    fn parse_results_from_sample_html() {
+        let html = r#"
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa">First &amp; title</a>
+              <a class="result__snippet">A snippet about the first result.</a>
+            </div>
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fb">Second title</a>
+              <a class="result__snippet">Second snippet.</a>
+            </div>
+        "#;
+        let results = parse_duckduckgo_html(html, 5);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First & title");
+        assert_eq!(results[0].url, "https://example.com/a");
+        assert_eq!(results[0].snippet, "A snippet about the first result.");
+        assert_eq!(results[1].url, "https://example.org/b");
+    }
+
+    #[test]
+    fn parse_respects_max_results() {
+        let row = r#"<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.com">T</a>"#;
+        let html = row.repeat(10);
+        assert_eq!(parse_duckduckgo_html(&html, 3).len(), 3);
+    }
+}

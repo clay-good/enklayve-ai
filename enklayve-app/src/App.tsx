@@ -87,6 +87,32 @@ function App() {
   const [citationDoc, setCitationDoc] = useState<string | null>(null);
   const [citationPassages, setCitationPassages] = useState<string[]>([]);
   const [folderProgress, setFolderProgress] = useState<{ processed: number; total: number; current_file: string } | null>(null);
+  const [webAccess, setWebAccess] = useState<string>("unasked");
+  const [webSearching, setWebSearching] = useState(false);
+
+  useEffect(() => {
+    invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
+    let unlistenWeb: (() => void) | null = null;
+    listen("web-search", () => setWebSearching(true)).then((fn) => {
+      unlistenWeb = fn;
+    });
+    return () => {
+      if (unlistenWeb) unlistenWeb();
+    };
+  }, []);
+
+  const handleSetWeb = async (value: "enabled" | "disabled") => {
+    try {
+      await invoke("set_web_access", { value });
+    } catch (error) {
+      console.error("Failed to set web access:", error);
+    }
+    setWebAccess(value);
+  };
+
+  const handleToggleWeb = () => {
+    handleSetWeb(webAccess === "enabled" ? "disabled" : "enabled");
+  };
 
   useEffect(() => {
     checkOnboarding();
@@ -394,6 +420,7 @@ function App() {
       });
 
     } finally {
+      setWebSearching(false);
       if (unlisten) {
         unlisten();
       }
@@ -599,6 +626,32 @@ function App() {
     }
   };
 
+  const handleSaveToFolder = async (content: string) => {
+    try {
+      let folder = await invoke<string | null>("get_working_folder");
+      if (!folder) {
+        const picked = await open({ directory: true, multiple: false });
+        if (!picked || typeof picked !== "string") return;
+        await invoke("set_working_folder", { path: picked });
+        folder = picked;
+      }
+      const name = `enklayve-answer-${Date.now()}.md`;
+      const path = await invoke<string>("save_to_working_folder", {
+        fileName: name,
+        contents: content,
+      });
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Saved to your working folder:\n\n\`${path}\`` },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Could not save to your folder.\n\n${String(error)}` },
+      ]);
+    }
+  };
+
   const handleBackupComplete = (success: boolean, message: string) => {
     if (success && message.includes('restored')) {
       loadDocuments();
@@ -610,6 +663,31 @@ function App() {
     <div className="app">
       {showSecuritySettings && (
         <SecuritySettings onClose={handleSecuritySettingsClose} />
+      )}
+
+      {webAccess === "unasked" && !showOnboarding && !checkingOnboarding && !isLocked && (
+        <div className="citation-modal-overlay">
+          <div className="citation-modal">
+            <div className="citation-modal-header">
+              <h3>Enable web search?</h3>
+            </div>
+            <div className="citation-modal-body">
+              <p>
+                When your documents don't have the answer, Enklayve can search the web for you.
+                Only your question is sent out — never your documents. You can change this anytime
+                from the Documents panel.
+              </p>
+              <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+                <button className="upload-button" onClick={() => handleSetWeb("enabled")}>
+                  Enable web search
+                </button>
+                <button className="repair-button" onClick={() => handleSetWeb("disabled")}>
+                  Keep it offline
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {citationDoc && (
@@ -676,6 +754,8 @@ function App() {
             onUploadFolder={handleFolderUpload}
             onRepairIndex={handleRepairIndex}
             folderProgress={folderProgress}
+            webAccess={webAccess}
+            onToggleWeb={handleToggleWeb}
           />
         </div>
       </aside>
@@ -689,6 +769,8 @@ function App() {
           onSubmit={handleAskQuestion}
           onStop={handleStopGeneration}
           onOpenCitation={handleOpenCitation}
+          onSaveMessage={handleSaveToFolder}
+          webSearching={webSearching}
         />
       </main>
     </div>

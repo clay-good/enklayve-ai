@@ -222,10 +222,125 @@ pub async fn get_document_passages(
     Ok(chunks.into_iter().map(|c| c.chunk_text).collect())
 }
 
+/// Web access state: "unasked" (never prompted), "enabled", or "disabled".
+#[tauri::command]
+pub fn get_web_access(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    Ok(crate::settings::get_setting(&conn, "web_access")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "unasked".to_string()))
+}
+
+#[tauri::command]
+pub fn set_web_access(app_handle: tauri::AppHandle, value: String) -> Result<(), String> {
+    let normalized = if value == "enabled" { "enabled" } else { "disabled" };
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    crate::settings::set_setting(&conn, "web_access", normalized).map_err(|e| e.to_string())
+}
+
+/// The one folder the agent may read from and write to, if the user granted one.
+#[tauri::command]
+pub fn get_working_folder(app_handle: tauri::AppHandle) -> Result<Option<String>, String> {
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    crate::settings::get_setting(&conn, "working_folder").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_working_folder(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("The selected path is not a folder.".to_string());
+    }
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    crate::settings::set_setting(&conn, "working_folder", &path).map_err(|e| e.to_string())
+}
+
+/// Write text into the granted working folder (sandboxed). Returns the full path.
+#[tauri::command]
+pub fn save_to_working_folder(
+    app_handle: tauri::AppHandle,
+    file_name: String,
+    contents: String,
+) -> Result<String, String> {
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    let root = crate::settings::get_setting(&conn, "working_folder")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No working folder is set. Choose one first.".to_string())?;
+
+    let path = crate::fs_sandbox::write_file(std::path::Path::new(&root), &file_name, &contents)
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Always retrieve documents if they exist - let the model decide relevance
 /// No hardcoded patterns or guessing about user intent
 fn should_retrieve_documents(_query: &str, has_documents: bool) -> bool {
     has_documents
+}
+
+/// Is web access turned on?
+fn web_access_enabled(app_handle: &tauri::AppHandle) -> bool {
+    let Ok(conn) = crate::database::get_connection(app_handle) else { return false };
+    if crate::settings::init_settings_table(&conn).is_err() {
+        return false;
+    }
+    matches!(
+        crate::settings::get_setting(&conn, "web_access").ok().flatten().as_deref(),
+        Some("enabled")
+    )
+}
+
+/// When the documents don't answer a question and web access is on, search the
+/// web and build a prompt that answers from those results. Only the user's
+/// question is sent out — never their documents. Returns `None` when web access
+/// is off, documents already answered, or the search found nothing.
+async fn maybe_web_prompt(
+    question: &str,
+    docs_empty: bool,
+    current_date: &str,
+    conversation_context: &str,
+    app_handle: &tauri::AppHandle,
+    window: Option<&tauri::Window>,
+) -> Option<String> {
+    if !docs_empty || !web_access_enabled(app_handle) {
+        return None;
+    }
+
+    if let Some(w) = window {
+        let _ = w.emit("web-search", serde_json::json!({ "query": question }));
+    }
+
+    let results = crate::web::search(question, 4).await.ok()?;
+    if results.is_empty() {
+        return None;
+    }
+
+    let mut web_block = String::new();
+    for r in &results {
+        web_block.push_str(&format!("[{}]({})\n{}\n\n", r.title, r.url, r.snippet));
+    }
+
+    let system = format!(
+        "You are a helpful assistant. Today is {}. Answer the user's question using the web search results below. Cite your sources inline as Markdown links, for example [source](https://example.com). If the results do not answer the question, say so plainly. /no_think",
+        current_date
+    );
+    let user = if conversation_context.is_empty() {
+        format!("Web search results:\n\n{}\nQuestion: {}", web_block, question)
+    } else {
+        format!(
+            "Web search results:\n\n{}\nConversation so far:\n{}\n\nQuestion: {}",
+            web_block, conversation_context, question
+        )
+    };
+
+    Some(format!(
+        "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+        system, user
+    ))
 }
 
 /// Query documents using RAG (Retrieval-Augmented Generation)
@@ -375,6 +490,12 @@ pub async fn query_documents(
             )
         }
     };
+
+    // Opt-in web fallback: if the documents didn't answer and web access is on,
+    // answer from a web search instead (non-streaming path has no progress window).
+    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, &app_handle, None)
+        .await
+        .unwrap_or(prompt);
 
     // If model path provided, use actual LLM inference with caching
     if let Some(model_path_str) = model_path {
@@ -589,6 +710,12 @@ pub async fn query_documents_streaming(
             )
         }
     };
+
+    // Opt-in web fallback: if the documents didn't answer and web access is on,
+    // answer from a web search instead, and tell the UI it happened.
+    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, &app_handle, Some(&window))
+        .await
+        .unwrap_or(prompt);
 
     // If model path provided, use actual LLM inference with streaming
     if let Some(model_path_str) = model_path {

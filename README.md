@@ -11,7 +11,7 @@ Enklayve is a secure, privacy-first desktop app that lets you ask your own docum
 ## Why Enklayve?
 
 - **Zero Setup**: The app detects your hardware, picks the best-fit model, and installs it. No model pickers, no config, no terminal.
-- **Local-First & Private**: Everything runs on your device and is encrypted at rest. Fully offline by default — web access is strictly opt-in.
+- **Local-First & Private**: Everything runs on your device and is encrypted at rest. Fully offline until you choose otherwise — Enklayve asks once whether it may search the web, and even then only your question is ever sent, never your documents.
 - **Always Free**: No subscriptions, no hidden costs, no premium tiers.
 - **Capable Models**: Runs modern local models (Qwen3-class) that are genuinely good at both answering from your documents and using tools.
 - **GPU Accelerated**: Automatic optimization for Apple Silicon (Metal) and NVIDIA (CUDA).
@@ -33,7 +33,7 @@ Enklayve is a secure, privacy-first desktop app that lets you ask your own docum
 
 ### A Tiny, Tasteful Agent
 - Retrieve from your documents
-- Fetch from the web — **opt-in and off by default**, with URL citations
+- Fetch from the web — **asked once, then automatic** when your documents don't have the answer; only your question is sent, with URL citations
 - Read/write inside **one folder you designate** (sandboxed)
 - No coding, no terminal, no OS automation — that's the whole toolset
 
