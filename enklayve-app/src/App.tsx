@@ -70,6 +70,18 @@ interface ActiveModel {
   note: string;
 }
 
+interface ModelOption {
+  name: string;
+  file_name: string;
+  repo_url: string;
+  size_gb: number;
+  performance_tier: string;
+  speed_estimate: string;
+  downloaded: boolean;
+  active: boolean;
+  recommended: boolean;
+}
+
 function App() {
   const [question, setQuestion] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -87,6 +99,8 @@ function App() {
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [modelPath, setModelPath] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<ActiveModel | null>(null);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [downloadingModel, setDownloadingModel] = useState<{ fileName: string; percent: number } | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [appVersion, setAppVersion] = useState<string>("");
 
@@ -327,8 +341,8 @@ function App() {
     }
   }
 
-  // The app auto-selects the best model for this machine from what's
-  // downloaded — the user never has to choose. We just load it and preload it.
+  // The app auto-selects a sensible model for this machine, but the user can
+  // switch anytime from the model picker. We load the active model and preload it.
   async function loadModelPath() {
     try {
       const active = await invoke<ActiveModel | null>("get_active_model");
@@ -343,6 +357,53 @@ function App() {
       }
     } catch (error) {
       console.error("Failed to load model path:", error);
+    }
+    loadModelOptions();
+  }
+
+  async function loadModelOptions() {
+    try {
+      const options = await invoke<ModelOption[]>("list_model_options");
+      setModelOptions(options);
+    } catch (error) {
+      console.error("Failed to load model options:", error);
+    }
+  }
+
+  // Switch the active model. If it isn't downloaded yet, download it first
+  // (showing progress), then make it active, load and preload it.
+  async function switchModel(option: ModelOption) {
+    if (downloadingModel) return;
+    try {
+      if (!option.downloaded) {
+        setDownloadingModel({ fileName: option.file_name, percent: 0 });
+        const unlisten = await listen<{ percentage: number }>("download-progress", (e) => {
+          setDownloadingModel({ fileName: option.file_name, percent: e.payload.percentage });
+        });
+        try {
+          await invoke("download_model", {
+            url: option.repo_url,
+            modelName: option.file_name,
+            checksum: null,
+          });
+        } finally {
+          unlisten();
+          setDownloadingModel(null);
+        }
+      }
+      await invoke("set_active_model", { fileName: option.file_name });
+      const active = await invoke<ActiveModel | null>("get_active_model");
+      if (active) {
+        setActiveModel(active);
+        setModelPath(active.path);
+        invoke("preload_model", { modelPath: active.path }).catch((e) =>
+          console.error("Model preload failed:", e)
+        );
+      }
+      await loadModelOptions();
+    } catch (error) {
+      console.error("Failed to switch model:", error);
+      setDownloadingModel(null);
     }
   }
 
@@ -870,6 +931,9 @@ function App() {
             onToggleWeb={handleToggleWeb}
             onAbout={() => setShowAbout(true)}
             activeModelName={activeModel?.name}
+            modelOptions={modelOptions}
+            onSelectModel={switchModel}
+            downloadingModel={downloadingModel}
           />
         </div>
       </aside>

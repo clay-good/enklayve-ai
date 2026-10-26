@@ -106,6 +106,8 @@ pub fn run() {
             commands::reset_onboarding,
             commands::get_best_model,
             commands::get_active_model,
+            commands::set_active_model,
+            commands::list_model_options,
             commands::get_document_passages,
             commands::upload_folder,
             commands::check_index_integrity,

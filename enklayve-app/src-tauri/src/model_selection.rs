@@ -113,6 +113,20 @@ pub struct ActiveModelSelection {
     pub note: String,
 }
 
+/// A model the machine can run, for the picker UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelOption {
+    pub name: String,
+    pub file_name: String,
+    pub repo_url: String,
+    pub size_gb: f32,
+    pub performance_tier: String,
+    pub speed_estimate: String,
+    pub downloaded: bool,
+    pub active: bool,
+    pub recommended: bool,
+}
+
 /// Pick the model to run from the set that's downloaded: the most capable one
 /// this machine's memory can handle, stepping down automatically when needed so
 /// the user never has to think about it. Falls back to the lightest download if

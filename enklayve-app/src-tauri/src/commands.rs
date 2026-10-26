@@ -1749,7 +1749,66 @@ pub async fn get_active_model(
         return Ok(None);
     }
     let hardware = HardwareProfile::detect().map_err(|e| e.to_string())?;
+
+    // Honor the user's explicit choice when that model is actually downloaded;
+    // otherwise auto-pick the best-fitting one.
+    if let Ok(conn) = crate::database::get_connection(&app_handle) {
+        let _ = crate::settings::init_settings_table(&conn);
+        if let Ok(Some(pref)) = crate::settings::get_setting(&conn, "preferred_model") {
+            if let Some(d) = downloaded.iter().find(|d| d.name == pref).cloned() {
+                return Ok(crate::model_selection::pick_active_model(&[d], &hardware));
+            }
+        }
+    }
     Ok(crate::model_selection::pick_active_model(&downloaded, &hardware))
+}
+
+/// Save the user's chosen model (persisted; used by get_active_model next load).
+#[tauri::command]
+pub fn set_active_model(app_handle: tauri::AppHandle, file_name: String) -> Result<(), String> {
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::settings::init_settings_table(&conn).map_err(|e| e.to_string())?;
+    crate::settings::set_setting(&conn, "preferred_model", &file_name).map_err(|e| e.to_string())
+}
+
+/// The models this machine can run, for the model picker: each with whether it's
+/// downloaded and which one is active, so the user can switch freely.
+#[tauri::command]
+pub async fn list_model_options(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::model_selection::ModelOption>, String> {
+    let hardware = HardwareProfile::detect().map_err(|e| e.to_string())?;
+    let recs = crate::models::get_recommended_models(&hardware);
+    let downloaded = crate::downloads::list_downloaded_models(&app_handle)
+        .await
+        .map_err(|e| e.to_string())?;
+    let downloaded_names: std::collections::HashSet<String> =
+        downloaded.iter().map(|d| d.name.clone()).collect();
+
+    let active_name = get_active_model(app_handle.clone())
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.name);
+
+    let mut options: Vec<crate::model_selection::ModelOption> = recs
+        .into_iter()
+        .filter(|r| !matches!(r.compatibility, crate::models::CompatibilityLevel::Incompatible))
+        .map(|r| crate::model_selection::ModelOption {
+            active: active_name.as_deref() == Some(r.model.name.as_str()),
+            downloaded: downloaded_names.contains(&r.model.file_name),
+            recommended: r.is_recommended,
+            speed_estimate: r.estimated_speed,
+            name: r.model.name,
+            file_name: r.model.file_name,
+            repo_url: r.model.repo_url,
+            size_gb: r.model.size_gb,
+            performance_tier: r.model.performance_tier,
+        })
+        .collect();
+    // Fastest (smallest) first, so the quick options lead.
+    options.sort_by(|a, b| a.size_gb.partial_cmp(&b.size_gb).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(options)
 }
 
 /// Get hardware summary in user-friendly format

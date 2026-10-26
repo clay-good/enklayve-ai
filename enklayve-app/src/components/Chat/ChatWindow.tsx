@@ -310,6 +310,9 @@ export function ChatWindow({
             onChange={(e) => onQuestionChange(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={1}
+            spellCheck
+            autoCorrect="on"
+            autoCapitalize="sentences"
             style={{ resize: 'none', maxHeight: '200px', overflowY: 'auto' }}
           />
           {loading ? (

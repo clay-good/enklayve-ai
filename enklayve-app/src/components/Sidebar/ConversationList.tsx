@@ -38,6 +38,15 @@ const IconUpload = () => (
 const IconArchive = () => (
   <svg {...iconProps}><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M10 12h4" /></svg>
 );
+const IconChevron = () => (
+  <svg {...iconProps} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>
+);
+const IconCheck = () => (
+  <svg {...iconProps} width={14} height={14}><path d="M20 6 9 17l-5-5" /></svg>
+);
+const IconDownloadSmall = () => (
+  <svg {...iconProps} width={14} height={14}><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
+);
 
 interface ConversationSummary {
   id: number;
@@ -45,6 +54,18 @@ interface ConversationSummary {
   created_at: number;
   updated_at: number;
   message_count: number;
+}
+
+interface ModelOption {
+  name: string;
+  file_name: string;
+  repo_url: string;
+  size_gb: number;
+  performance_tier: string;
+  speed_estimate: string;
+  downloaded: boolean;
+  active: boolean;
+  recommended: boolean;
 }
 
 interface ConversationListProps {
@@ -72,6 +93,9 @@ interface ConversationListProps {
   onToggleWeb: () => void;
   onAbout?: () => void;
   activeModelName?: string;
+  modelOptions?: ModelOption[];
+  onSelectModel?: (option: ModelOption) => void;
+  downloadingModel?: { fileName: string; percent: number } | null;
 }
 
 export function ConversationList({
@@ -99,6 +123,9 @@ export function ConversationList({
   onToggleWeb,
   onAbout,
   activeModelName,
+  modelOptions = [],
+  onSelectModel,
+  downloadingModel,
 }: ConversationListProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -106,6 +133,7 @@ export function ConversationList({
   const [isRestoring, setIsRestoring] = useState(false);
   const [menu, setMenu] = useState<{ id: number; x: number; y: number; archived: boolean } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
   const openMenu = (e: React.MouseEvent, id: number, archived: boolean) => {
     e.preventDefault();
@@ -251,14 +279,68 @@ export function ConversationList({
   return (
     <div className="conversation-list-container">
       <div className="conversation-list-header">
-        <button
-          className="app-identity"
-          onClick={onAbout}
-          title="About Enklayve — version and the model it's running"
-        >
-          <span className="app-identity-name">Enklayve</span>
-          {activeModelName && <span className="app-identity-model">{activeModelName}</span>}
-        </button>
+        <div className="brand-row">
+          <button
+            className="app-identity"
+            onClick={onAbout}
+            title="About Enklayve — version and privacy"
+          >
+            <span className="app-identity-name">Enklayve</span>
+          </button>
+          {(activeModelName || downloadingModel) && (
+            <div className="model-picker">
+              <button
+                className="model-picker-trigger"
+                onClick={() => setModelMenuOpen((v) => !v)}
+                title="Choose the AI model — bigger is smarter, smaller is faster"
+              >
+                <span className="model-picker-name">
+                  {downloadingModel
+                    ? `Downloading… ${downloadingModel.percent.toFixed(0)}%`
+                    : activeModelName}
+                </span>
+                <IconChevron />
+              </button>
+              {modelMenuOpen && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setModelMenuOpen(false)} />
+                  <div className="model-menu">
+                    <div className="model-menu-heading">Model</div>
+                    <div className="model-menu-hint">Bigger is smarter, smaller is faster.</div>
+                    {modelOptions.map((o) => {
+                      const dl = downloadingModel?.fileName === o.file_name;
+                      return (
+                        <button
+                          key={o.file_name}
+                          className={`model-menu-item ${o.active ? 'active' : ''}`}
+                          disabled={downloadingModel != null}
+                          onClick={() => {
+                            onSelectModel?.(o);
+                            if (o.downloaded) setModelMenuOpen(false);
+                          }}
+                        >
+                          <span className="model-menu-check">{o.active ? <IconCheck /> : null}</span>
+                          <span className="model-menu-main">
+                            <span className="model-menu-name">{o.name}</span>
+                            <span className="model-menu-sub">
+                              {o.performance_tier} · {o.size_gb.toFixed(1)} GB
+                              {o.downloaded ? '' : ' · not downloaded'}
+                            </span>
+                          </span>
+                          <span className="model-menu-status">
+                            {dl
+                              ? `${downloadingModel!.percent.toFixed(0)}%`
+                              : (!o.downloaded ? <IconDownloadSmall /> : null)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <input
           id="conversation-search"
           type="text"
