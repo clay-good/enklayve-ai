@@ -14,8 +14,8 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
 
     let conn = Connection::open(&db_path)?;
 
-    // Enable foreign key constraints (disabled by default in SQLite)
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    // Crash-resilient, concurrent-friendly connection settings.
+    apply_pragmas(&conn)?;
 
     // Create documents table
     conn.execute(
@@ -166,12 +166,48 @@ pub fn get_database_path(app_handle: &AppHandle) -> Result<PathBuf> {
 }
 
 /// Get a database connection
+/// Connection settings applied to every SQLite connection: foreign keys, plus
+/// WAL journaling for crash-safe atomic commits and better read/write concurrency,
+/// and a busy timeout so brief lock contention retries instead of failing.
+fn apply_pragmas(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA busy_timeout = 5000;",
+    )?;
+    Ok(())
+}
+
 pub fn get_connection(app_handle: &AppHandle) -> Result<Connection> {
     let db_path = get_database_path(app_handle)?;
     let conn = Connection::open(db_path)?;
-
-    // Enable foreign key constraints (must be enabled for each connection)
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
-
+    apply_pragmas(&conn)?;
     Ok(conn)
+}
+
+#[cfg(test)]
+mod pragma_tests {
+    use super::*;
+
+    #[test]
+    fn wal_mode_is_enabled() {
+        let dir = std::env::temp_dir().join(format!(
+            "enklayve_wal_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("test.db");
+        let conn = Connection::open(&db).unwrap();
+        apply_pragmas(&conn).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

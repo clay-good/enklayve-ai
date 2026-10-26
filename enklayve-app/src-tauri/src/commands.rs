@@ -195,6 +195,15 @@ pub async fn rebuild_index(
     crate::index_health::rebuild_index(&app_handle).map_err(|e| e.to_string())
 }
 
+/// Run on launch: SQLite WAL auto-recovers an interrupted commit, then we run a
+/// consistency pass (integrity check + orphan cleanup) and report the result.
+#[tauri::command]
+pub fn run_startup_recovery(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::index_health::RecoveryReport, String> {
+    crate::index_health::startup_recovery(&app_handle).map_err(|e| e.to_string())
+}
+
 /// Return the text passages of a document by file name, so the UI can show the
 /// source a citation points to.
 #[tauri::command]

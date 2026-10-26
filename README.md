@@ -4,7 +4,7 @@
 
 Enklayve is a secure, privacy-first desktop app that lets you ask your own documents anything, answered by AI models running entirely on your computer. No account, no setup, no cloud, no subscriptions. Install it, drop in a folder, and start chatting — or just chat, and (opt-in) let it browse the web. Think NotebookLM, but it runs on your machine and treats your files like a vault.
 
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/user/enklayve-dev)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/clay-good/enklayve-ai)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange)](https://www.rust-lang.org/)
 
@@ -69,7 +69,7 @@ Enklayve is a secure, privacy-first desktop app that lets you ask your own docum
 
 ### macOS (Apple Silicon & Intel)
 
-1. Download the DMG installer from [Releases](https://github.com/user/enklayve-dev/releases)
+1. Download the DMG installer from [Releases](https://github.com/clay-good/enklayve-ai/releases)
 2. Open the DMG file
 3. Drag Enklayve to Applications folder
 4. Run the following command to allow unsigned app:
@@ -80,14 +80,14 @@ Enklayve is a secure, privacy-first desktop app that lets you ask your own docum
 
 ### Windows
 
-1. Download the EXE installer from [Releases](https://github.com/user/enklayve-dev/releases)
+1. Download the EXE installer from [Releases](https://github.com/clay-good/enklayve-ai/releases)
 2. Run the installer
 3. Follow the installation wizard
 4. Launch Enklayve from Start Menu
 
 ### Linux
 
-1. Download the AppImage from [Releases](https://github.com/user/enklayve-dev/releases)
+1. Download the AppImage from [Releases](https://github.com/clay-good/enklayve-ai/releases)
 2. Make it executable:
    ```bash
    chmod +x enklayve-*.AppImage
@@ -141,7 +141,7 @@ Models run with GPU acceleration (Metal/CUDA) at interactive speeds on modern ha
 
 ```bash
 # Clone repository
-git clone https://github.com/user/enklayve-dev.git
+git clone https://github.com/clay-good/enklayve-ai.git
 cd enklayve-dev/enklayve-app
 
 # Install dependencies
@@ -273,8 +273,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/user/enklayve-dev/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/user/enklayve-dev/discussions)
+- **Issues**: [GitHub Issues](https://github.com/clay-good/enklayve-ai/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/clay-good/enklayve-ai/discussions)
 - **Documentation**: [docs/](docs/)
 
 ## Roadmap

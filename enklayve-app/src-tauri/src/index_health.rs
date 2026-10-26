@@ -5,6 +5,7 @@
 //! makes recovery from a corrupt or out-of-sync index safe and self-contained.
 
 use anyhow::Result;
+use rusqlite::Connection;
 use serde::Serialize;
 use tauri::AppHandle;
 
@@ -101,4 +102,64 @@ pub fn rebuild_index(app_handle: &AppHandle) -> Result<RebuildResult> {
         reembedded,
         orphans_removed,
     })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecoveryReport {
+    pub integrity_ok: bool,
+    pub integrity_detail: String,
+    pub orphan_chunks_removed: i64,
+}
+
+/// Consistency pass on an open connection: a SQLite integrity check plus removal
+/// of any orphan chunks left by an interrupted write.
+pub fn recover_connection(conn: &Connection) -> Result<RecoveryReport> {
+    let integrity_detail: String = conn
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .unwrap_or_else(|_| "unknown".to_string());
+    let integrity_ok = integrity_detail.eq_ignore_ascii_case("ok");
+
+    let orphan_chunks_removed = conn.execute(
+        "DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)",
+        [],
+    )? as i64;
+
+    Ok(RecoveryReport {
+        integrity_ok,
+        integrity_detail,
+        orphan_chunks_removed,
+    })
+}
+
+/// Startup recovery: opening the database lets SQLite's WAL auto-recover any
+/// commit interrupted by a crash; then we run a consistency pass on top.
+pub fn startup_recovery(app_handle: &AppHandle) -> Result<RecoveryReport> {
+    let conn = crate::database::get_connection(app_handle)?;
+    recover_connection(&conn)
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn recovers_orphan_chunks_and_reports_ok() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY);
+             CREATE TABLE chunks (id INTEGER PRIMARY KEY, document_id INTEGER);
+             INSERT INTO documents (id) VALUES (1);
+             INSERT INTO chunks (id, document_id) VALUES (1, 1), (2, 999);",
+        )
+        .unwrap();
+
+        let report = recover_connection(&conn).unwrap();
+        assert!(report.integrity_ok);
+        assert_eq!(report.orphan_chunks_removed, 1);
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1);
+    }
 }

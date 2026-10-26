@@ -92,6 +92,22 @@ function App() {
 
   useEffect(() => {
     invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
+    // Crash recovery: WAL auto-recovers interrupted commits on open; this runs a
+    // consistency pass and only speaks up if the database is actually damaged.
+    invoke<{ integrity_ok: boolean; orphan_chunks_removed: number }>("run_startup_recovery")
+      .then((r) => {
+        if (r && !r.integrity_ok) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content:
+                "I found a problem with the local database on startup. Use **Repair** in the Documents panel to rebuild the search index.",
+            },
+          ]);
+        }
+      })
+      .catch(() => {});
     let unlistenWeb: (() => void) | null = null;
     listen("web-search", () => setWebSearching(true)).then((fn) => {
       unlistenWeb = fn;

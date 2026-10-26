@@ -108,6 +108,7 @@ pub fn run() {
             commands::upload_folder,
             commands::check_index_integrity,
             commands::rebuild_index,
+            commands::run_startup_recovery,
             commands::get_web_access,
             commands::set_web_access,
             commands::get_working_folder,

@@ -71,6 +71,10 @@ impl BackupManager {
             total_conversations, total_documents, total_chunks
         ));
 
+        // Flush the WAL into the main database file so the copied database.db is
+        // complete and self-contained (WAL changes otherwise live in a side file).
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
         // Export database
         zip.start_file("database.db", options)?;
         let mut db_file = fs::File::open(&db_path)?;

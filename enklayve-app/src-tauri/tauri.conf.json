@@ -62,9 +62,9 @@
   },
   "plugins": {
     "updater": {
-      "active": true,
+      "active": false,
       "endpoints": [
-        "https://github.com/user/enklayve-dev/releases/latest/download/latest.json"
+        "https://github.com/clay-good/enklayve-ai/releases/latest/download/latest.json"
       ],
       "dialog": true,
       "pubkey": "TO_BE_GENERATED_BY_TAURI_CLI",
