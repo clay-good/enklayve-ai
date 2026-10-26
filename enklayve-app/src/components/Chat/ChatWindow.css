@@ -179,6 +179,51 @@
   cursor: not-allowed;
 }
 
+.attach-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.attach-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+
+.attach-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 11;
+  min-width: 160px;
+  padding: var(--space-1);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attach-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.attach-menu-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
 .composer-docs {
   display: flex;
   flex-wrap: wrap;

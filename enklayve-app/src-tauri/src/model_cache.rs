@@ -110,11 +110,18 @@ fn detect_block_repetition(text: &str) -> bool {
             continue;
         }
 
+        // Split point, moved to a UTF-8 char boundary so byte-slicing a string
+        // with multi-byte characters can never panic.
+        let mut cut = len - window_size;
+        while cut < len && !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+
         // Get the last block
-        let last_block = &text[len - window_size..];
+        let last_block = &text[cut..];
 
         // Search for it earlier in the text
-        let search_area = &text[..len - window_size];
+        let search_area = &text[..cut];
         if search_area.contains(last_block) {
             return true;
         }
@@ -607,7 +614,10 @@ impl CachedModel {
             // Update repetition detection window
             recent_text.push_str(&piece);
             if recent_text.len() > REPETITION_WINDOW {
-                recent_text = recent_text.chars().skip(recent_text.len() - REPETITION_WINDOW).collect();
+                // Keep the last REPETITION_WINDOW characters (char-based, so
+                // multi-byte UTF-8 is never split and the count can't underflow).
+                let overflow = recent_text.chars().count().saturating_sub(REPETITION_WINDOW);
+                recent_text = recent_text.chars().skip(overflow).collect();
             }
 
             // Check for repetition every 10 tokens
@@ -656,7 +666,17 @@ impl CachedModel {
                 if response_len > REPETITION_WINDOW * 2 {
                     let earlier_start = response_len.saturating_sub(REPETITION_WINDOW * 2);
                     let earlier_end = response_len.saturating_sub(REPETITION_WINDOW);
-                    let earlier_text = &response[earlier_start..earlier_end];
+                    // Move each index forward to the next UTF-8 char boundary so
+                    // byte-slicing never splits a multi-byte character (crash fix).
+                    let mut es = earlier_start;
+                    while es < response_len && !response.is_char_boundary(es) {
+                        es += 1;
+                    }
+                    let mut ee = earlier_end;
+                    while ee < response_len && !response.is_char_boundary(ee) {
+                        ee += 1;
+                    }
+                    let earlier_text = if es <= ee { &response[es..ee] } else { "" };
 
                     // Check if recent text is very similar to earlier text
                     if recent_text.len() >= REPETITION_THRESHOLD && earlier_text.len() >= REPETITION_THRESHOLD {

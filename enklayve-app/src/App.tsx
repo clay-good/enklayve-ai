@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -88,6 +88,26 @@ function App() {
   const [folderProgress, setFolderProgress] = useState<{ processed: number; total: number; current_file: string } | null>(null);
   const [webAccess, setWebAccess] = useState<string>("unasked");
   const [webSearching, setWebSearching] = useState(false);
+  // Which conversation (if any) is currently generating, and which one is on
+  // screen — so "working" only shows in its own chat, not everywhere.
+  const [generatingConvId, setGeneratingConvId] = useState<number | null>(null);
+  const viewConvRef = useRef<number | null>(null);
+  const genConvRef = useRef<number | null>(null);
+  useEffect(() => {
+    viewConvRef.current = currentConversationId;
+  }, [currentConversationId]);
+
+  // Update the streamed answer only when its owning chat is the one on screen,
+  // and only while its streaming placeholder is still the last message.
+  function applyToActiveView(content: string, streaming: boolean) {
+    if (viewConvRef.current !== genConvRef.current) return;
+    setMessages((prev) => {
+      if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") return prev;
+      const next = [...prev];
+      next[next.length - 1] = { role: "assistant", content, isStreaming: streaming };
+      return next;
+    });
+  }
 
   useEffect(() => {
     invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
@@ -308,11 +328,6 @@ function App() {
 
   async function createNewConversation() {
     try {
-      // Stop any ongoing generation before creating new conversation
-      if (loading) {
-        await handleStopGeneration();
-      }
-
       const newConvId = await invoke<number>("create_conversation", {
         title: "New Conversation",
       });
@@ -327,11 +342,7 @@ function App() {
 
   async function switchConversation(convId: number) {
     try {
-      // Stop any ongoing generation before switching
-      if (loading) {
-        await handleStopGeneration();
-      }
-
+      // Note: an in-progress answer keeps generating in its own chat.
       setCurrentConversationId(convId);
       const msgs = await invoke<Message[]>("get_conversation_messages", {
         conversationId: convId,
@@ -377,30 +388,18 @@ function App() {
         content: userQuestion,
       });
 
+      genConvRef.current = conversationId;
+      viewConvRef.current = conversationId;
+      setGeneratingConvId(conversationId);
+
       unlisten = await listen<string>("llm-token", (event) => {
         accumulatedResponse += event.payload;
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1] = {
-            role: "assistant",
-            content: accumulatedResponse,
-            isStreaming: true,
-          };
-          return newMessages;
-        });
+        applyToActiveView(accumulatedResponse, true);
       });
 
       unlistenComplete = await listen<string>("llm-complete", (event) => {
         accumulatedResponse = event.payload;
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1] = {
-            role: "assistant",
-            content: accumulatedResponse,
-            isStreaming: false,
-          };
-          return newMessages;
-        });
+        applyToActiveView(accumulatedResponse, false);
       });
 
       await invoke<string>("query_documents_streaming", {
@@ -415,18 +414,9 @@ function App() {
           role: "assistant",
           content: accumulatedResponse,
         });
-      } else if (!accumulatedResponse || !accumulatedResponse.trim()) {
-        // Handle empty response
+      } else {
         const emptyMessage = "I wasn't able to generate a response. Please try rephrasing your question or check if documents are uploaded.";
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1] = {
-            role: "assistant",
-            content: emptyMessage,
-            isStreaming: false,
-          };
-          return newMessages;
-        });
+        applyToActiveView(emptyMessage, false);
       }
 
       await loadConversations();
@@ -457,15 +447,7 @@ function App() {
         errorText += `\n\nDetails: ${errorMessage}`;
       }
 
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        newMessages[newMessages.length - 1] = {
-          role: "assistant",
-          content: `**${errorCategory}**\n\n${errorText}`,
-          isStreaming: false,
-        };
-        return newMessages;
-      });
+      applyToActiveView(`**${errorCategory}**\n\n${errorText}`, false);
 
     } finally {
       setWebSearching(false);
@@ -476,6 +458,8 @@ function App() {
         unlistenComplete();
       }
       setLoading(false);
+      setGeneratingConvId(null);
+      genConvRef.current = null;
     }
   }
 
@@ -486,6 +470,19 @@ function App() {
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error("Failed to stop generation:", error);
+    } finally {
+      // Always recover the UI, even if the stop call failed.
+      setLoading(false);
+      setWebSearching(false);
+      setGeneratingConvId(null);
+      genConvRef.current = null;
+      setMessages((prev) => {
+        if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") return prev;
+        if (!prev[prev.length - 1].isStreaming) return prev;
+        const next = [...prev];
+        next[next.length - 1] = { ...next[next.length - 1], isStreaming: false };
+        return next;
+      });
     }
   }
 
@@ -759,7 +756,8 @@ function App() {
         <ChatWindow
           messages={messages}
           question={question}
-          loading={loading}
+          loading={loading && generatingConvId === currentConversationId}
+          otherBusy={loading && generatingConvId !== currentConversationId}
           documents={documents}
           folderProgress={folderProgress}
           ocrProgress={ocrProgress}
@@ -771,7 +769,7 @@ function App() {
           onAttachFile={handleDocumentUpload}
           onAttachFolder={handleFolderUpload}
           onRemoveDocument={handleDocumentDelete}
-          webSearching={webSearching}
+          webSearching={webSearching && generatingConvId === currentConversationId}
         />
       </main>
     </div>

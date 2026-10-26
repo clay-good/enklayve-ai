@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessageBubble } from './MessageBubble';
 import './ChatWindow.css';
 
@@ -53,6 +53,7 @@ interface ChatWindowProps {
   onAttachFolder?: () => void;
   onRemoveDocument?: (id: number) => void;
   webSearching?: boolean;
+  otherBusy?: boolean;
 }
 
 export function ChatWindow({
@@ -71,10 +72,12 @@ export function ChatWindow({
   onAttachFolder,
   onRemoveDocument,
   webSearching = false,
+  otherBusy = false,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
 
   // Grow the input with the prompt, up to a cap, then scroll inside it.
   useEffect(() => {
@@ -99,7 +102,7 @@ export function ChatWindow({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Submit on Enter (but allow Shift+Enter for new lines)
-    if (e.key === 'Enter' && !e.shiftKey && !loading && question.trim()) {
+    if (e.key === 'Enter' && !e.shiftKey && !loading && !otherBusy && question.trim()) {
       e.preventDefault(); // Prevent double submission
       onSubmit();
     }
@@ -185,25 +188,41 @@ export function ChatWindow({
           </div>
         )}
 
+        {otherBusy && (
+          <div className="composer-progress">Finishing an answer in another chat…</div>
+        )}
+
         <div className="composer-row">
-          <button
-            className="attach-button"
-            onClick={onAttachFile}
-            disabled={loading}
-            title="Attach a file to this chat"
-            aria-label="Attach a file"
-          >
-            <IconPaperclip />
-          </button>
-          <button
-            className="attach-button"
-            onClick={onAttachFolder}
-            disabled={loading}
-            title="Attach a folder to this chat"
-            aria-label="Attach a folder"
-          >
-            <IconFolderPlus />
-          </button>
+          <div className="attach-wrap">
+            <button
+              className="attach-button"
+              onClick={() => setAttachOpen((v) => !v)}
+              disabled={loading || otherBusy}
+              title="Attach a file or folder to this chat"
+              aria-label="Attach"
+            >
+              <IconPaperclip />
+            </button>
+            {attachOpen && (
+              <>
+                <div className="attach-backdrop" onClick={() => setAttachOpen(false)} />
+                <div className="attach-menu">
+                  <button
+                    className="attach-menu-item"
+                    onClick={() => { setAttachOpen(false); onAttachFile?.(); }}
+                  >
+                    <IconFile /> Add file
+                  </button>
+                  <button
+                    className="attach-menu-item"
+                    onClick={() => { setAttachOpen(false); onAttachFolder?.(); }}
+                  >
+                    <IconFolderPlus /> Add folder
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <textarea
             ref={textareaRef}
             className="chat-input"
@@ -211,7 +230,6 @@ export function ChatWindow({
             value={question}
             onChange={(e) => onQuestionChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={loading}
             rows={1}
             style={{ resize: 'none', maxHeight: '200px', overflowY: 'auto' }}
           />
@@ -223,7 +241,8 @@ export function ChatWindow({
             <button
               className="chat-submit-button"
               onClick={onSubmit}
-              disabled={!question.trim()}
+              disabled={!question.trim() || otherBusy}
+              title={otherBusy ? 'Finishing an answer in another chat…' : undefined}
             >
               Send
             </button>
