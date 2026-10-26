@@ -1711,6 +1711,24 @@ pub fn get_best_model(app_handle: tauri::AppHandle) -> Result<crate::model_selec
     Ok(best_model)
 }
 
+/// The model the app is actually running, chosen automatically from what's
+/// downloaded and what this machine can handle. Used both to load the model at
+/// startup and to show the active model in the About panel — the user never
+/// picks one.
+#[tauri::command]
+pub async fn get_active_model(
+    app_handle: tauri::AppHandle,
+) -> Result<Option<crate::model_selection::ActiveModelSelection>, String> {
+    let downloaded = crate::downloads::list_downloaded_models(&app_handle)
+        .await
+        .map_err(|e| e.to_string())?;
+    if downloaded.is_empty() {
+        return Ok(None);
+    }
+    let hardware = HardwareProfile::detect().map_err(|e| e.to_string())?;
+    Ok(crate::model_selection::pick_active_model(&downloaded, &hardware))
+}
+
 /// Get hardware summary in user-friendly format
 #[tauri::command]
 pub fn get_hardware_summary() -> Result<String, String> {

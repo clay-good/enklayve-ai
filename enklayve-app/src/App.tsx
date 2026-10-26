@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { WelcomeFlow } from "./components/Onboarding/WelcomeFlow";
 import { ChatWindow } from "./components/Chat/ChatWindow";
@@ -59,11 +60,14 @@ interface OcrProgress {
   progress: number;
 }
 
-interface DownloadedModelInfo {
-  name: string;
+interface ActiveModel {
   path: string;
-  size_bytes: number;
+  name: string;
   size_gb: number;
+  performance_tier: string;
+  context_length: number;
+  auto_selected: boolean;
+  note: string;
 }
 
 function App() {
@@ -82,6 +86,9 @@ function App() {
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [modelPath, setModelPath] = useState<string | null>(null);
+  const [activeModel, setActiveModel] = useState<ActiveModel | null>(null);
+  const [showAbout, setShowAbout] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("");
 
   // Security state
   const [isLocked, setIsLocked] = useState(false);
@@ -115,6 +122,7 @@ function App() {
   }
 
   useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
     invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
     // Auto-repair on launch: WAL recovers interrupted commits on open, then we
     // quietly drop orphan chunks and re-embed any corrupt embeddings. It only
@@ -312,18 +320,19 @@ function App() {
     }
   }
 
+  // The app auto-selects the best model for this machine from what's
+  // downloaded — the user never has to choose. We just load it and preload it.
   async function loadModelPath() {
     try {
-      const models = await invoke<DownloadedModelInfo[]>("list_downloaded_models");
-      if (models.length > 0) {
-        setModelPath(models[0].path);
-
+      const active = await invoke<ActiveModel | null>("get_active_model");
+      if (active) {
+        setActiveModel(active);
+        setModelPath(active.path);
         try {
-          await invoke("preload_model", { modelPath: models[0].path });
+          await invoke("preload_model", { modelPath: active.path });
         } catch (preloadError) {
           console.error("Model preload failed:", preloadError);
         }
-      } else {
       }
     } catch (error) {
       console.error("Failed to load model path:", error);
@@ -774,6 +783,47 @@ function App() {
         </div>
       )}
 
+      {showAbout && (
+        <div className="citation-modal-overlay" onClick={() => setShowAbout(false)}>
+          <div className="citation-modal about-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="citation-modal-header">
+              <h3>Enklayve{appVersion ? ` ${appVersion}` : ""}</h3>
+              <button
+                className="citation-modal-close"
+                aria-label="Close"
+                onClick={() => setShowAbout(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="citation-modal-body">
+              <div className="about-row">
+                <span className="about-label">AI model</span>
+                <span className="about-value">
+                  {activeModel ? activeModel.name : "No model loaded yet"}
+                </span>
+              </div>
+              {activeModel && (
+                <>
+                  <div className="about-row">
+                    <span className="about-label">Profile</span>
+                    <span className="about-value">
+                      {activeModel.performance_tier} · {activeModel.size_gb.toFixed(1)} GB
+                    </span>
+                  </div>
+                  <p className="about-note">{activeModel.note}</p>
+                </>
+              )}
+              <p className="about-privacy">
+                Everything runs on this device and is encrypted at rest. No accounts,
+                no telemetry, no tracking. Web search, when on, sends only your question —
+                never your documents.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <aside className="sidebar">
         <div className="sidebar-top">
           <ConversationList
@@ -800,6 +850,7 @@ function App() {
             securityEnabled={securityEnabled}
             webAccess={webAccess}
             onToggleWeb={handleToggleWeb}
+            onAbout={() => setShowAbout(true)}
           />
         </div>
       </aside>
