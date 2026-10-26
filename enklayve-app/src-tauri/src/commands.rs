@@ -25,10 +25,11 @@ pub fn greet(name: &str) -> String {
 #[tauri::command]
 pub async fn upload_document(
     file_path: String,
+    conversation_id: i64,
     app_handle: tauri::AppHandle,
     model_cache: tauri::State<'_, crate::model_cache::ModelCache>,
 ) -> Result<DocumentMetadata, String> {
-    let result = crate::documents::upload_document(file_path, &app_handle)
+    let result = crate::documents::upload_document(file_path, conversation_id, &app_handle)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -40,8 +41,8 @@ pub async fn upload_document(
 
 /// List all uploaded documents
 #[tauri::command]
-pub async fn list_documents(app_handle: tauri::AppHandle) -> Result<Vec<DocumentMetadata>, String> {
-    crate::documents::list_documents(&app_handle)
+pub async fn list_documents(conversation_id: i64, app_handle: tauri::AppHandle) -> Result<Vec<DocumentMetadata>, String> {
+    crate::documents::list_documents(conversation_id, &app_handle)
         .await
         .map_err(|e| e.to_string())
 }
@@ -139,6 +140,7 @@ pub struct FolderIngestSummary {
 #[tauri::command]
 pub async fn upload_folder(
     folder_path: String,
+    conversation_id: i64,
     app_handle: tauri::AppHandle,
     window: tauri::Window,
 ) -> Result<FolderIngestSummary, String> {
@@ -164,7 +166,7 @@ pub async fn upload_folder(
             serde_json::json!({ "processed": i, "total": total, "current_file": name }),
         );
 
-        match crate::documents::upload_document(path.to_string_lossy().to_string(), &app_handle).await {
+        match crate::documents::upload_document(path.to_string_lossy().to_string(), conversation_id, &app_handle).await {
             Ok(_) => ingested.push(name),
             Err(e) => failed.push(FileIngestError { file_name: name, error: e.to_string() }),
         }
@@ -376,18 +378,21 @@ pub async fn query_documents(
     crate::logger::log_info(&format!("Model path: {:?}", model_path));
     crate::logger::log_info(&format!("Conversation ID: {:?}", conversation_id));
 
-    // Check if documents exist
-    let documents = crate::documents::list_documents(&app_handle)
-        .await
-        .map_err(|e| e.to_string())?;
-    let has_documents = !documents.is_empty();
+    // Documents are scoped to the current conversation (no cross-chat bleed).
+    let has_documents = match conversation_id {
+        Some(cid) => !crate::documents::list_documents(cid, &app_handle)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_empty(),
+        None => false,
+    };
 
     // Determine if retrieval is needed
     let should_retrieve = should_retrieve_documents(&question, has_documents);
 
     // Search for relevant chunks using hybrid search only if needed
-    let search_results = if should_retrieve {
-        crate::vector_search::hybrid_search(&question, &app_handle, 10)
+    let search_results = if let (true, Some(cid)) = (should_retrieve, conversation_id) {
+        crate::vector_search::hybrid_search(&question, &app_handle, 10, cid)
             .await
             .map_err(|e| {
                 crate::logger::log_error(&format!("Failed to search chunks: {}", e));
@@ -404,8 +409,10 @@ pub async fn query_documents(
     // Relevance gate: only treat documents as relevant when the best semantic
     // match clears a threshold. Otherwise answer from general knowledge or the
     // web instead of forcing weak, misleading context into the prompt.
-    let top_similarity = if should_retrieve && !search_results.is_empty() {
-        crate::vector_search::top_semantic_similarity(&question, &app_handle)
+    let top_similarity = if let (true, false, Some(cid)) =
+        (should_retrieve, search_results.is_empty(), conversation_id)
+    {
+        crate::vector_search::top_semantic_similarity(&question, cid, &app_handle)
             .await
             .unwrap_or(0.0)
     } else {
@@ -614,15 +621,19 @@ pub async fn query_documents_streaming(
 ) -> Result<String, String> {
     crate::logger::log_info(&format!("Streaming query received: {}", question));
 
-    let documents = crate::documents::list_documents(&app_handle)
-        .await
-        .map_err(|e| e.to_string())?;
-    let has_documents = !documents.is_empty();
+    // Documents are scoped to the current conversation (no cross-chat bleed).
+    let has_documents = match conversation_id {
+        Some(cid) => !crate::documents::list_documents(cid, &app_handle)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_empty(),
+        None => false,
+    };
 
     let should_retrieve = should_retrieve_documents(&question, has_documents);
 
-    let search_results = if should_retrieve {
-        crate::vector_search::hybrid_search(&question, &app_handle, 10)
+    let search_results = if let (true, Some(cid)) = (should_retrieve, conversation_id) {
+        crate::vector_search::hybrid_search(&question, &app_handle, 10, cid)
             .await
             .map_err(|e| {
                 crate::logger::log_error(&format!("Failed to search chunks: {}", e));
@@ -639,8 +650,10 @@ pub async fn query_documents_streaming(
     // Relevance gate: only treat documents as relevant when the best semantic
     // match clears a threshold. Otherwise answer from general knowledge or the
     // web instead of forcing weak, misleading context into the prompt.
-    let top_similarity = if should_retrieve && !search_results.is_empty() {
-        crate::vector_search::top_semantic_similarity(&question, &app_handle)
+    let top_similarity = if let (true, false, Some(cid)) =
+        (should_retrieve, search_results.is_empty(), conversation_id)
+    {
+        crate::vector_search::top_semantic_similarity(&question, cid, &app_handle)
             .await
             .unwrap_or(0.0)
     } else {

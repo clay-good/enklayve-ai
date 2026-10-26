@@ -30,7 +30,8 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
             author TEXT,
             creation_date INTEGER,
             page_count INTEGER,
-            word_count INTEGER
+            word_count INTEGER,
+            conversation_id INTEGER
         )",
         [],
     )?;
@@ -55,6 +56,9 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
     if !columns.contains(&"word_count".to_string()) {
         conn.execute("ALTER TABLE documents ADD COLUMN word_count INTEGER", [])?;
     }
+    if !columns.contains(&"conversation_id".to_string()) {
+        conn.execute("ALTER TABLE documents ADD COLUMN conversation_id INTEGER", [])?;
+    }
 
     // Create chunks table
     conn.execute(
@@ -74,6 +78,13 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_chunks_document
          ON chunks(document_id)",
+        [],
+    )?;
+
+    // Index documents by the conversation they belong to (per-chat scoping)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_conversation
+         ON documents(conversation_id)",
         [],
     )?;
 

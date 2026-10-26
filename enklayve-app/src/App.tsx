@@ -5,7 +5,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { WelcomeFlow } from "./components/Onboarding/WelcomeFlow";
 import { ChatWindow } from "./components/Chat/ChatWindow";
 import { ConversationList } from "./components/Sidebar/ConversationList";
-import { DocumentPanel } from "./components/Documents/DocumentPanel";
 import { UnlockScreen } from "./components/Security/UnlockScreen";
 import { SecuritySettings } from "./components/Security/SecuritySettings";
 import "./styles/design-tokens.css";
@@ -225,13 +224,28 @@ function App() {
     await loadModelPath();
   };
 
-  async function loadDocuments() {
+  // Documents are scoped to a conversation; with no conversation there are none.
+  async function loadDocuments(convId: number | null = null) {
+    if (!convId) {
+      setDocuments([]);
+      return;
+    }
     try {
-      const docs = await invoke<DocumentMetadata[]>("list_documents");
+      const docs = await invoke<DocumentMetadata[]>("list_documents", { conversationId: convId });
       setDocuments(docs);
     } catch (error) {
       console.error("Failed to load documents:", error);
+      setDocuments([]);
     }
+  }
+
+  // Return the current conversation, creating one if the user hasn't started yet.
+  async function ensureConversation(): Promise<number> {
+    if (currentConversationId) return currentConversationId;
+    const newId = await invoke<number>("create_conversation", { title: "New Conversation" });
+    setCurrentConversationId(newId);
+    await loadConversations();
+    return newId;
   }
 
   async function loadConversations() {
@@ -304,6 +318,7 @@ function App() {
       });
       setCurrentConversationId(newConvId);
       setMessages([]);
+      setDocuments([]);
       await loadConversations();
     } catch (error) {
       console.error("Failed to create conversation:", error);
@@ -322,6 +337,7 @@ function App() {
         conversationId: convId,
       });
       setMessages(msgs);
+      await loadDocuments(convId);
     } catch (error) {
       console.error("Failed to switch conversation:", error);
     }
@@ -485,13 +501,14 @@ function App() {
         (event) => setFolderProgress(event.payload)
       );
 
+      const convId = await ensureConversation();
       const summary = await invoke<{
         ingested: string[];
         failed: { file_name: string; error: string }[];
         total: number;
-      }>("upload_folder", { folderPath: selected });
+      }>("upload_folder", { folderPath: selected, conversationId: convId });
 
-      await loadDocuments();
+      await loadDocuments(convId);
 
       let msg = `Imported ${summary.ingested.length} of ${summary.total} supported file${summary.total === 1 ? "" : "s"} from the folder.`;
       if (summary.failed.length > 0) {
@@ -529,10 +546,12 @@ function App() {
     if (selected && typeof selected === "string") {
       setLoading(true);
       try {
+        const convId = await ensureConversation();
         await invoke<DocumentMetadata>("upload_document", {
           filePath: selected,
+          conversationId: convId,
         });
-        await loadDocuments();
+        await loadDocuments(convId);
       } catch (error) {
         console.error("Failed to upload document:", error);
 
@@ -561,7 +580,7 @@ function App() {
       if (selectedDocument?.id === documentId) {
         setSelectedDocument(null);
       }
-      await loadDocuments();
+      await loadDocuments(currentConversationId);
     } catch (error) {
       console.error("Failed to delete document:", error);
     }
@@ -734,20 +753,6 @@ function App() {
             onToggleWeb={handleToggleWeb}
           />
         </div>
-
-        <div className="sidebar-bottom">
-          <DocumentPanel
-            documents={documents}
-            selectedDocument={selectedDocument}
-            highlightedDocument={null}
-            ocrProgress={ocrProgress}
-            onDocumentSelect={setSelectedDocument}
-            onDocumentDelete={handleDocumentDelete}
-            onUpload={handleDocumentUpload}
-            onUploadFolder={handleFolderUpload}
-            folderProgress={folderProgress}
-          />
-        </div>
       </aside>
 
       <main className="main-content">
@@ -755,11 +760,17 @@ function App() {
           messages={messages}
           question={question}
           loading={loading}
+          documents={documents}
+          folderProgress={folderProgress}
+          ocrProgress={ocrProgress}
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
           onStop={handleStopGeneration}
           onOpenCitation={handleOpenCitation}
           onSaveMessage={handleSaveToFolder}
+          onAttachFile={handleDocumentUpload}
+          onAttachFolder={handleFolderUpload}
+          onRemoveDocument={handleDocumentDelete}
           webSearching={webSearching}
         />
       </main>

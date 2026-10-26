@@ -29,6 +29,12 @@ const IconSun = () => (
 const IconMoon = () => (
   <svg {...iconProps}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
 );
+const IconDownload = () => (
+  <svg {...iconProps}><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
+);
+const IconUpload = () => (
+  <svg {...iconProps}><path d="M12 21V9M7 14l5-5 5 5" /><path d="M5 3h14" /></svg>
+);
 
 interface ConversationSummary {
   id: number;
@@ -177,20 +183,22 @@ export function ConversationList({
       </div>
       <div className="header-buttons">
         <button
-          className="text-button"
+          className="icon-button"
           onClick={handleBackup}
           disabled={isBackingUp}
-          title="Create Backup"
+          title="Export — back up your chats and data"
+          aria-label="Export backup"
         >
-          {isBackingUp ? 'Exporting...' : 'Export'}
+          <IconDownload />
         </button>
         <button
-          className="text-button"
+          className="icon-button"
           onClick={handleRestore}
           disabled={isRestoring}
-          title="Restore from Backup"
+          title="Import — restore from a backup"
+          aria-label="Import backup"
         >
-          {isRestoring ? 'Importing...' : 'Import'}
+          <IconUpload />
         </button>
         <div className="toolbar-spacer" />
         {onSecuritySettings && (
@@ -223,7 +231,7 @@ export function ConversationList({
 
       <div className="conversation-list-section">
         <div className="section-header">
-          <h3>Conversations ({conversations.length})</h3>
+          <h3>Chats ({conversations.length})</h3>
           <button className="new-conversation-button" onClick={onNewConversation}>
             + New
           </button>

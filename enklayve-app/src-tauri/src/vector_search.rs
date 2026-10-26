@@ -17,6 +17,7 @@ pub async fn search_similar_chunks(
     query: &str,
     app_handle: &AppHandle,
     top_k: usize,
+    conversation_id: i64,
 ) -> Result<Vec<SearchResult>> {
     // Generate embedding for the query
     let generator = EmbeddingGenerator::new()?;
@@ -30,10 +31,10 @@ pub async fn search_similar_chunks(
         "SELECT c.id, c.document_id, c.chunk_text, c.chunk_index, c.embedding, d.file_name
          FROM chunks c
          JOIN documents d ON c.document_id = d.id
-         WHERE c.embedding IS NOT NULL"
+         WHERE c.embedding IS NOT NULL AND d.conversation_id = ?1"
     )?;
 
-    let chunks = stmt.query_map([], |row| {
+    let chunks = stmt.query_map([conversation_id], |row| {
         Ok((
             row.get::<_, i64>(0)?,        // chunk_id
             row.get::<_, i64>(1)?,        // document_id
@@ -79,8 +80,8 @@ pub async fn search_similar_chunks(
 /// Best cosine similarity between the query and any indexed chunk (0.0 if none).
 /// Used as a relevance gate to decide whether the documents actually cover a
 /// question before feeding their chunks to the model.
-pub async fn top_semantic_similarity(query: &str, app_handle: &AppHandle) -> Result<f32> {
-    let results = search_similar_chunks(query, app_handle, 1).await?;
+pub async fn top_semantic_similarity(query: &str, conversation_id: i64, app_handle: &AppHandle) -> Result<f32> {
+    let results = search_similar_chunks(query, app_handle, 1, conversation_id).await?;
     Ok(results.first().map(|r| r.similarity).unwrap_or(0.0))
 }
 
@@ -117,6 +118,7 @@ pub async fn keyword_search(
     query: &str,
     app_handle: &AppHandle,
     top_k: usize,
+    conversation_id: i64,
 ) -> Result<Vec<SearchResult>> {
     if query.trim().is_empty() {
         return Ok(vec![]);
@@ -132,12 +134,12 @@ pub async fn keyword_search(
          FROM chunks_fts
          JOIN chunks c ON chunks_fts.rowid = c.id
          JOIN documents d ON c.document_id = d.id
-         WHERE chunks_fts MATCH ?1
+         WHERE chunks_fts MATCH ?1 AND d.conversation_id = ?3
          ORDER BY rank
          LIMIT ?2"
     )?;
 
-    let results = stmt.query_map(rusqlite::params![sanitized_query, top_k], |row| {
+    let results = stmt.query_map(rusqlite::params![sanitized_query, top_k, conversation_id], |row| {
         Ok(SearchResult {
             chunk_id: row.get(0)?,
             document_id: row.get(1)?,
@@ -236,11 +238,12 @@ pub async fn hybrid_search(
     query: &str,
     app_handle: &AppHandle,
     top_k: usize,
+    conversation_id: i64,
 ) -> Result<Vec<SearchResult>> {
-    let semantic_results = search_similar_chunks(query, app_handle, top_k * 2).await?;
+    let semantic_results = search_similar_chunks(query, app_handle, top_k * 2, conversation_id).await?;
 
     let expanded_query = expand_query(query);
-    let keyword_results = keyword_search(&expanded_query, app_handle, top_k * 2).await?;
+    let keyword_results = keyword_search(&expanded_query, app_handle, top_k * 2, conversation_id).await?;
 
     if semantic_results.is_empty() && keyword_results.is_empty() {
         return Ok(vec![]);

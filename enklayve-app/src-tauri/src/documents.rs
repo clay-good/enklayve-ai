@@ -19,6 +19,7 @@ pub struct DocumentMetadata {
     pub creation_date: Option<i64>,
     pub page_count: Option<i64>,
     pub word_count: Option<i64>,
+    pub conversation_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +38,7 @@ pub struct DocumentChunk {
 }
 
 /// Upload and process a document
-pub async fn upload_document(file_path: String, app_handle: &AppHandle) -> Result<DocumentMetadata> {
+pub async fn upload_document(file_path: String, conversation_id: i64, app_handle: &AppHandle) -> Result<DocumentMetadata> {
     crate::logger::log_info(&format!("Starting document upload: {}", file_path));
 
     let path = Path::new(&file_path);
@@ -158,9 +159,9 @@ pub async fn upload_document(file_path: String, app_handle: &AppHandle) -> Resul
 
     let result: Result<i64> = (|| {
         conn.execute(
-            "INSERT INTO documents (file_name, file_path, file_type, upload_date, size_bytes, title, author, creation_date, page_count, word_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            rusqlite::params![file_name, file_path, file_type, upload_date, size_bytes_i64, title, author, creation_date, page_count, word_count],
+            "INSERT INTO documents (file_name, file_path, file_type, upload_date, size_bytes, title, author, creation_date, page_count, word_count, conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![file_name, file_path, file_type, upload_date, size_bytes_i64, title, author, creation_date, page_count, word_count, conversation_id],
         )?;
 
         let document_id = conn.last_insert_rowid();
@@ -206,6 +207,7 @@ pub async fn upload_document(file_path: String, app_handle: &AppHandle) -> Resul
         creation_date,
         page_count,
         word_count: Some(word_count),
+        conversation_id: Some(conversation_id),
     };
 
     crate::logger::log_info(&format!("Document uploaded successfully: {} ({} chunks)", file_name, chunks.len()));
@@ -214,19 +216,20 @@ pub async fn upload_document(file_path: String, app_handle: &AppHandle) -> Resul
 }
 
 /// List all documents
-pub async fn list_documents(app_handle: &AppHandle) -> Result<Vec<DocumentMetadata>> {
+pub async fn list_documents(conversation_id: i64, app_handle: &AppHandle) -> Result<Vec<DocumentMetadata>> {
     let conn = crate::database::get_connection(app_handle)?;
 
     let mut stmt = conn.prepare(
         "SELECT d.id, d.file_name, d.file_path, d.file_type, d.upload_date, d.size_bytes,
-                COUNT(c.id) as chunks_count, d.title, d.author, d.creation_date, d.page_count, d.word_count
+                COUNT(c.id) as chunks_count, d.title, d.author, d.creation_date, d.page_count, d.word_count, d.conversation_id
          FROM documents d
          LEFT JOIN chunks c ON d.id = c.document_id
+         WHERE d.conversation_id = ?1
          GROUP BY d.id
          ORDER BY d.upload_date DESC"
     )?;
 
-    let documents = stmt.query_map([], |row| {
+    let documents = stmt.query_map([conversation_id], |row| {
         Ok(DocumentMetadata {
             id: row.get(0)?,
             file_name: row.get(1)?,
@@ -240,6 +243,7 @@ pub async fn list_documents(app_handle: &AppHandle) -> Result<Vec<DocumentMetada
             creation_date: row.get(9).ok(),
             page_count: row.get(10).ok(),
             word_count: row.get(11).ok(),
+            conversation_id: row.get(12).ok(),
         })
     })?;
 
