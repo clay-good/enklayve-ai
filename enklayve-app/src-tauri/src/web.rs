@@ -51,7 +51,12 @@ pub async fn fetch_readable(url: &str, max_chars: usize) -> Result<String> {
     let html = resp.text().await.context("could not read page body")?;
     let mut text = html2text::from_read(html.as_bytes(), 100);
     if text.len() > max_chars {
-        text.truncate(max_chars);
+        // Back up to a UTF-8 char boundary so truncate() can't panic mid-character.
+        let mut end = max_chars;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
     }
     Ok(text)
 }

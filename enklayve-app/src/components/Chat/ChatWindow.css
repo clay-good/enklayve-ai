@@ -75,10 +75,7 @@
   transition: all var(--transition-base) var(--easing-ease-in-out);
 }
 
-.feature-list li:hover {
-  background-color: var(--color-bg-tertiary);
-  transform: translateX(4px);
-}
+/* The feature list is informational, not interactive — no hover affordance. */
 
 /* Starter prompts on the empty state */
 .starter-prompts {
@@ -177,7 +174,8 @@
 /* Floating "jump to latest" button, shown when scrolled up */
 .jump-to-latest {
   position: absolute;
-  right: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 110px;
   z-index: 5;
   display: inline-flex;
@@ -197,7 +195,7 @@
 .jump-to-latest:hover {
   background-color: var(--color-bg-tertiary);
   border-color: var(--color-border-focus);
-  transform: translateY(-1px);
+  transform: translateX(-50%) translateY(-1px);
 }
 
 .chat-input-area {
@@ -328,11 +326,43 @@
 }
 
 .composer-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+.composer-progress .progress-text {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.progress-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border-primary);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: progress-spin 0.8s linear infinite;
+}
+
+@keyframes progress-spin {
+  to { transform: rotate(360deg); }
+}
+
+.elapsed-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-spinner { animation: none; }
 }
 
 .chat-input {

@@ -195,8 +195,17 @@ pub async fn extract_text_from_image(image_path: &Path, app_handle: Option<&taur
 
 /// Extract text from a scanned PDF using OCR
 /// This function converts PDF pages to images and runs OCR on them
-pub async fn extract_text_from_scanned_pdf(pdf_path: &Path) -> Result<String> {
+pub async fn extract_text_from_scanned_pdf(pdf_path: &Path, app_handle: Option<&tauri::AppHandle>) -> Result<String> {
     crate::logger::log_info(&format!("Starting OCR processing for: {:?}", pdf_path));
+
+    let emit = |stage: &str, message: String, progress: u32| {
+        if let Some(app) = app_handle {
+            let _ = app.emit("ocr-progress", serde_json::json!({
+                "stage": stage, "message": message, "progress": progress,
+            }));
+        }
+    };
+    emit("starting", "Reading scanned document…".to_string(), 2);
 
     // Ensure models are downloaded
     let detection_model_path = ensure_model_downloaded(DETECTION_MODEL_URL, "text-detection.rten")
@@ -224,17 +233,21 @@ pub async fn extract_text_from_scanned_pdf(pdf_path: &Path) -> Result<String> {
     })
     .context("Failed to initialize OCR engine")?;
 
-    // Convert PDF pages to images
-    let images = pdf_to_images(pdf_path)
+    // Convert PDF pages to images (emits its own "rendering" progress per page)
+    let images = pdf_to_images(pdf_path, app_handle)
         .context("Failed to convert PDF to images")?;
 
-    crate::logger::log_info(&format!("Processing {} page(s) with OCR...", images.len()));
+    let total = images.len();
+    crate::logger::log_info(&format!("Processing {} page(s) with OCR...", total));
 
     // Process each page with OCR
     let mut all_text = String::new();
 
     for (page_num, img) in images.iter().enumerate() {
-        crate::logger::log_info(&format!("OCR processing page {} of {}...", page_num + 1, images.len()));
+        crate::logger::log_info(&format!("OCR processing page {} of {}...", page_num + 1, total));
+        // Rendering used 5%..50%; OCR uses 50%..95% so the bar advances the whole way.
+        let progress = 50 + ((page_num as f32 / total.max(1) as f32) * 45.0) as u32;
+        emit("recognizing", format!("Reading page {} of {}…", page_num + 1, total), progress);
 
         // Convert to RGB8
         let rgb_image = img.to_rgb8();
@@ -268,14 +281,17 @@ pub async fn extract_text_from_scanned_pdf(pdf_path: &Path) -> Result<String> {
         anyhow::bail!("OCR did not extract any text from the PDF. The image quality may be too low, or the document may not contain readable text.");
     }
 
+    emit("complete", "Scanned document read.".to_string(), 100);
     crate::logger::log_info(&format!("OCR completed! Extracted {} characters", all_text.len()));
 
     Ok(all_text)
 }
 
 /// Convert PDF pages to images for OCR processing
-fn pdf_to_images(pdf_path: &Path) -> Result<Vec<DynamicImage>> {
+fn pdf_to_images(pdf_path: &Path, app_handle: Option<&tauri::AppHandle>) -> Result<Vec<DynamicImage>> {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use rayon::prelude::*;
 
     crate::logger::log_info("Rendering PDF pages to images using hayro...");
 
@@ -296,9 +312,8 @@ fn pdf_to_images(pdf_path: &Path) -> Result<Vec<DynamicImage>> {
         anyhow::bail!("PDF has no pages to process");
     }
 
-    let mut images = Vec::new();
-
-    // Set up rendering settings (scale 2.0 for ~150 DPI quality)
+    // Scale 2.0 ≈ 144 DPI: enough for clean OCR of typed text and numbers while
+    // keeping render time down.
     let render_settings = hayro::RenderSettings {
         x_scale: 2.0,
         y_scale: 2.0,
@@ -308,35 +323,43 @@ fn pdf_to_images(pdf_path: &Path) -> Result<Vec<DynamicImage>> {
 
     let interpreter_settings = hayro::InterpreterSettings::default();
 
-    // Render each page to an image
-    for (page_index, page) in pages.iter().enumerate() {
-        crate::logger::log_info(&format!("Rendering page {} of {}...", page_index + 1, page_count));
-
-        // Render page to pixmap
-        let pixmap = hayro::render(page, &interpreter_settings, &render_settings);
-
-        // Convert pixmap to DynamicImage
-        let width = pixmap.width() as u32;
-        let height = pixmap.height() as u32;
-        let pixels = pixmap.data_as_u8_slice();
-
-        // Pixmap is RGBA, create RGBA image
-        let img_buffer = image::ImageBuffer::from_fn(width, height, |x, y| {
-            let offset = ((y * width + x) * 4) as usize;
-            if offset + 3 < pixels.len() {
-                image::Rgba([
-                    pixels[offset],
-                    pixels[offset + 1],
-                    pixels[offset + 2],
-                    pixels[offset + 3],
-                ])
-            } else {
-                image::Rgba([255, 255, 255, 255])  // White fallback
+    // Rendering is the slow half of scanned-PDF OCR, and every page is
+    // independent, so render them across all CPU cores. collect() keeps page
+    // order; the counter drives progress as pages finish (not necessarily in
+    // order, which is fine for a progress bar).
+    let rendered = Arc::new(AtomicUsize::new(0));
+    let images: Vec<DynamicImage> = pages
+        .par_iter()
+        .map(|page| {
+            let pixmap = hayro::render(page, &interpreter_settings, &render_settings);
+            let width = pixmap.width() as u32;
+            let height = pixmap.height() as u32;
+            let pixels = pixmap.data_as_u8_slice();
+            let img_buffer = image::ImageBuffer::from_fn(width, height, |x, y| {
+                let offset = ((y * width + x) * 4) as usize;
+                if offset + 3 < pixels.len() {
+                    image::Rgba([
+                        pixels[offset],
+                        pixels[offset + 1],
+                        pixels[offset + 2],
+                        pixels[offset + 3],
+                    ])
+                } else {
+                    image::Rgba([255, 255, 255, 255]) // White fallback
+                }
+            });
+            let n = rendered.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(app) = app_handle {
+                let progress = 5 + ((n as f32 / page_count.max(1) as f32) * 45.0) as u32;
+                let _ = app.emit("ocr-progress", serde_json::json!({
+                    "stage": "rendering",
+                    "message": format!("Rendering page {} of {}…", n, page_count),
+                    "progress": progress,
+                }));
             }
-        });
-
-        images.push(DynamicImage::ImageRgba8(img_buffer));
-    }
+            DynamicImage::ImageRgba8(img_buffer)
+        })
+        .collect();
 
     crate::logger::log_info(&format!("Successfully rendered {} pages to images", images.len()));
 

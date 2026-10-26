@@ -38,9 +38,6 @@ const IconUpload = () => (
 const IconArchive = () => (
   <svg {...iconProps}><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M10 12h4" /></svg>
 );
-const IconInfo = () => (
-  <svg {...iconProps}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
-);
 
 interface ConversationSummary {
   id: number;
@@ -72,6 +69,7 @@ interface ConversationListProps {
   webAccess: string;
   onToggleWeb: () => void;
   onAbout?: () => void;
+  activeModelName?: string;
 }
 
 export function ConversationList({
@@ -96,6 +94,7 @@ export function ConversationList({
   webAccess,
   onToggleWeb,
   onAbout,
+  activeModelName,
 }: ConversationListProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -200,6 +199,14 @@ export function ConversationList({
   return (
     <div className="conversation-list-container">
       <div className="conversation-list-header">
+        <button
+          className="app-identity"
+          onClick={onAbout}
+          title="About Enklayve — version and the model it's running"
+        >
+          <span className="app-identity-name">Enklayve</span>
+          {activeModelName && <span className="app-identity-model">{activeModelName}</span>}
+        </button>
         <input
           id="conversation-search"
           type="text"
@@ -262,16 +269,6 @@ export function ConversationList({
         >
           {isDarkMode ? <IconSun /> : <IconMoon />}
         </button>
-        {onAbout && (
-          <button
-            className="icon-button"
-            onClick={onAbout}
-            title="About Enklayve — app version and active model"
-            aria-label="About"
-          >
-            <IconInfo />
-          </button>
-        )}
       </div>
 
       <div className="conversation-list-section">

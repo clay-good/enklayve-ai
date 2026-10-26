@@ -297,7 +297,7 @@ fn detect_file_type(path: &Path) -> Result<String> {
 /// Extract text from document based on file type
 async fn extract_text(path: &Path, file_type: &str, app_handle: &tauri::AppHandle) -> Result<String> {
     match file_type {
-        "pdf" => extract_pdf_text(path).await,
+        "pdf" => extract_pdf_text(path, Some(app_handle)).await,
         "docx" => extract_docx_text(path),
         "txt" | "markdown" => extract_plain_text(path),
         "jpeg" | "png" => extract_image_text(path, app_handle).await,
@@ -331,7 +331,7 @@ async fn extract_image_text(path: &Path, app_handle: &tauri::AppHandle) -> Resul
 }
 
 /// Extract text from PDF (with automatic OCR fallback for scanned PDFs and table detection)
-async fn extract_pdf_text(path: &Path) -> Result<String> {
+async fn extract_pdf_text(path: &Path, app_handle: Option<&tauri::AppHandle>) -> Result<String> {
     crate::logger::log_info(&format!("Extracting text from PDF: {:?}", path));
 
     let bytes = std::fs::read(path)?;
@@ -345,7 +345,7 @@ async fn extract_pdf_text(path: &Path) -> Result<String> {
     if text.trim().is_empty() {
         crate::logger::log_warn(&format!("Standard PDF extraction resulted in empty text. Attempting OCR..."));
 
-        match crate::ocr::extract_text_from_scanned_pdf(path).await {
+        match crate::ocr::extract_text_from_scanned_pdf(path, app_handle).await {
             Ok(ocr_text) => {
                 crate::logger::log_info(&format!("OCR successful! Extracted {} characters", ocr_text.len()));
                 return Ok(ocr_text);

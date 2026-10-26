@@ -73,7 +73,6 @@ interface ActiveModel {
 function App() {
   const [question, setQuestion] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<DocumentMetadata | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -97,6 +96,13 @@ function App() {
   const [citationDoc, setCitationDoc] = useState<string | null>(null);
   const [citationPassages, setCitationPassages] = useState<string[]>([]);
   const [folderProgress, setFolderProgress] = useState<{ processed: number; total: number; current_file: string } | null>(null);
+  // Which chat an in-progress import belongs to, so its "indexing" banner only
+  // shows in that chat and never bleeds into a new or different one.
+  const [importConvId, setImportConvId] = useState<number | null>(null);
+  // Absolute start times (epoch ms) so the elapsed clocks keep counting from the
+  // real start even after switching chats and coming back.
+  const [genStartedAt, setGenStartedAt] = useState<number | null>(null);
+  const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [webAccess, setWebAccess] = useState<string>("unasked");
   const [webSearching, setWebSearching] = useState(false);
   // Which conversation (if any) is currently generating, and which one is on
@@ -430,8 +436,8 @@ function App() {
   }
 
   async function runGeneration(convId: number, userQuestion: string) {
-    setLoading(true);
     setGeneratingConvId(convId);
+    setGenStartedAt(Date.now());
     genConvRef.current = convId;
     accumulatedRef.current = "";
 
@@ -501,8 +507,8 @@ function App() {
       setWebSearching(false);
       if (unlisten) unlisten();
       if (unlistenComplete) unlistenComplete();
-      setLoading(false);
       setGeneratingConvId(null);
+      setGenStartedAt(null);
       genConvRef.current = null;
     }
   }
@@ -543,7 +549,6 @@ function App() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || typeof selected !== "string") return;
 
-    setLoading(true);
     let unlisten: (() => void) | null = null;
     try {
       unlisten = await listen<{ processed: number; total: number; current_file: string }>(
@@ -552,6 +557,8 @@ function App() {
       );
 
       const convId = await ensureConversation();
+      setImportConvId(convId);
+      setImportStartedAt(Date.now());
       const summary = await invoke<{
         ingested: string[];
         failed: { file_name: string; error: string }[];
@@ -578,7 +585,9 @@ function App() {
     } finally {
       if (unlisten) unlisten();
       setFolderProgress(null);
-      setLoading(false);
+      setOcrProgress(null);
+      setImportConvId(null);
+      setImportStartedAt(null);
     }
   }
 
@@ -594,9 +603,10 @@ function App() {
     });
 
     if (selected && typeof selected === "string") {
-      setLoading(true);
       try {
         const convId = await ensureConversation();
+        setImportConvId(convId);
+        setImportStartedAt(Date.now());
         await invoke<DocumentMetadata>("upload_document", {
           filePath: selected,
           conversationId: convId,
@@ -619,7 +629,9 @@ function App() {
         };
         setMessages((prev) => [...prev, errorMessage]);
       } finally {
-        setLoading(false);
+        setOcrProgress(null);
+        setImportConvId(null);
+        setImportStartedAt(null);
       }
     }
   }
@@ -740,11 +752,11 @@ function App() {
                 Only your question is sent out — never your documents. You can change this anytime
                 from the Documents panel.
               </p>
-              <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
-                <button className="upload-button" onClick={() => handleSetWeb("enabled")}>
+              <div className="modal-actions">
+                <button className="modal-primary-btn" onClick={() => handleSetWeb("enabled")}>
                   Enable web search
                 </button>
-                <button className="web-toggle-button" onClick={() => handleSetWeb("disabled")}>
+                <button className="modal-secondary-btn" onClick={() => handleSetWeb("disabled")}>
                   Keep it offline
                 </button>
               </div>
@@ -851,6 +863,7 @@ function App() {
             webAccess={webAccess}
             onToggleWeb={handleToggleWeb}
             onAbout={() => setShowAbout(true)}
+            activeModelName={activeModel?.name}
           />
         </div>
       </aside>
@@ -860,11 +873,13 @@ function App() {
           messages={messages}
           question={question}
           loading={generatingConvId === currentConversationId}
-          busy={loading}
+          importing={importConvId !== null}
+          genStartedAt={genStartedAt}
+          importStartedAt={importStartedAt}
           queued={currentConversationId != null && queuedConvIds.includes(currentConversationId)}
           documents={documents}
-          folderProgress={folderProgress}
-          ocrProgress={ocrProgress}
+          folderProgress={importConvId === currentConversationId ? folderProgress : null}
+          ocrProgress={importConvId === currentConversationId ? ocrProgress : null}
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
           onStarterPrompt={(text) => handleAskQuestion(text)}

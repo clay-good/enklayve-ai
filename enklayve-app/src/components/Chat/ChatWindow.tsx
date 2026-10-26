@@ -28,6 +28,21 @@ const IconArrowDown = () => (
   <svg {...svgProps} width={16} height={16}><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
 );
 
+// A small mm:ss timer counting up from an absolute start time. Because `since`
+// lives in App state (not component mount time), the elapsed time stays accurate
+// even after navigating away from the chat and back, like Claude Code's clock.
+function ElapsedTime({ since }: { since: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
+  const m = Math.floor(secs / 60);
+  const s = String(secs % 60).padStart(2, "0");
+  return <span className="elapsed-time">{m}:{s}</span>;
+}
+
 const STARTER_PROMPTS = [
   'What can Enklayve do for me?',
   'Summarize the documents I add to this chat',
@@ -66,7 +81,12 @@ interface ChatWindowProps {
   onRemoveDocument?: (id: number) => void;
   webSearching?: boolean;
   queued?: boolean;
-  busy?: boolean;
+  /** True only while a file/folder import is actually running (anywhere). We
+   *  block starting a second import, but never block on another chat answering. */
+  importing?: boolean;
+  /** Absolute start times (epoch ms) so elapsed clocks survive chat switches. */
+  genStartedAt?: number | null;
+  importStartedAt?: number | null;
 }
 
 export function ChatWindow({
@@ -87,7 +107,9 @@ export function ChatWindow({
   onRemoveDocument,
   webSearching = false,
   queued = false,
-  busy = false,
+  importing = false,
+  genStartedAt = null,
+  importStartedAt = null,
 }: ChatWindowProps) {
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -191,6 +213,7 @@ export function ChatWindow({
                 <span className="generating-text">
                   {webSearching ? 'Searching the web…' : 'Generating answer…'}
                 </span>
+                <ElapsedTime since={genStartedAt ?? Date.now()} />
               </div>
             )}
           </>
@@ -227,14 +250,20 @@ export function ChatWindow({
 
         {folderProgress && folderProgress.total > 0 && folderProgress.processed < folderProgress.total && (
           <div className="composer-progress">
-            Indexing {folderProgress.processed + 1} of {folderProgress.total}
-            {folderProgress.current_file ? `: ${folderProgress.current_file}` : ''}
+            <span className="progress-spinner" aria-hidden="true" />
+            <span className="progress-text">
+              Indexing {folderProgress.processed + 1} of {folderProgress.total}
+              {folderProgress.current_file ? `: ${folderProgress.current_file}` : ''}
+            </span>
+            <ElapsedTime since={importStartedAt ?? Date.now()} />
           </div>
         )}
 
         {ocrProgress && (
           <div className="composer-progress">
-            {ocrProgress.message} ({ocrProgress.progress}%)
+            <span className="progress-spinner" aria-hidden="true" />
+            <span className="progress-text">{ocrProgress.message} ({ocrProgress.progress}%)</span>
+            <ElapsedTime since={importStartedAt ?? Date.now()} />
           </div>
         )}
 
@@ -247,8 +276,8 @@ export function ChatWindow({
             <button
               className="attach-button"
               onClick={() => setAttachOpen((v) => !v)}
-              disabled={loading || busy}
-              title="Attach a file or folder to this chat"
+              disabled={importing}
+              title={importing ? "Finishing another import…" : "Attach a file or folder to this chat"}
               aria-label="Attach"
             >
               <IconPaperclip />
