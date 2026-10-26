@@ -35,6 +35,9 @@ const IconDownload = () => (
 const IconUpload = () => (
   <svg {...iconProps}><path d="M12 21V9M7 14l5-5 5 5" /><path d="M5 3h14" /></svg>
 );
+const IconArchive = () => (
+  <svg {...iconProps}><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M10 12h4" /></svg>
+);
 
 interface ConversationSummary {
   id: number;
@@ -54,7 +57,7 @@ interface ConversationListProps {
   onConversationTitleUpdate: (id: number, title: string) => void;
   onConversationArchive: (id: number) => void;
   onConversationUnarchive: (id: number) => void;
-  archivedConversations: ConversationSummary[];
+  archivedConversations?: ConversationSummary[];
   onNewConversation: () => void;
   isDarkMode: boolean;
   onThemeToggle: () => void;
@@ -75,7 +78,7 @@ export function ConversationList({
   onConversationTitleUpdate,
   onConversationArchive,
   onConversationUnarchive,
-  archivedConversations,
+  archivedConversations = [],
   onNewConversation,
   isDarkMode,
   onThemeToggle,
@@ -215,7 +218,14 @@ export function ConversationList({
         >
           <IconUpload />
         </button>
-        <div className="toolbar-spacer" />
+        <button
+          className={`icon-button ${showArchived ? 'is-on' : ''}`}
+          onClick={() => setShowArchived((v) => !v)}
+          title={showArchived ? 'Show active chats' : `Show archived chats (${archivedConversations.length})`}
+          aria-label="Toggle archived chats"
+        >
+          <IconArchive />
+        </button>
         {onSecuritySettings && (
           <button
             className={`icon-button ${securityEnabled ? 'is-on' : ''}`}
@@ -246,25 +256,27 @@ export function ConversationList({
 
       <div className="conversation-list-section">
         <div className="section-header">
-          <h3>Chats ({conversations.length})</h3>
-          <button className="new-conversation-button" onClick={onNewConversation}>
-            + New
-          </button>
+          <h3>{showArchived ? 'Archived' : 'Chats'} ({(showArchived ? archivedConversations : conversations).length})</h3>
+          {!showArchived && (
+            <button className="new-conversation-button" onClick={onNewConversation}>
+              + New
+            </button>
+          )}
         </div>
 
         <div className="conversation-list">
-          {conversations.length === 0 ? (
+          {(showArchived ? archivedConversations : conversations).length === 0 ? (
             <div className="empty-conversations">
-              <p>No conversations yet</p>
-              <p className="empty-hint">Start a new conversation to begin</p>
+              <p>{showArchived ? 'No archived chats' : 'No chats yet'}</p>
+              {!showArchived && <p className="empty-hint">Start a new chat to begin</p>}
             </div>
           ) : (
-            conversations.map((conv) => (
+            (showArchived ? archivedConversations : conversations).map((conv) => (
               <div
                 key={conv.id}
                 className={`conversation-item ${currentConversationId === conv.id ? 'active' : ''}`}
                 onClick={() => onConversationSelect(conv.id)}
-                onContextMenu={(e) => openMenu(e, conv.id, false)}
+                onContextMenu={(e) => openMenu(e, conv.id, showArchived)}
               >
                 <div className="conversation-content">
                   {editingId === conv.id ? (
@@ -297,42 +309,6 @@ export function ConversationList({
           )}
         </div>
       </div>
-
-      {archivedConversations.length > 0 && (
-        <div className="archived-section">
-          <button className="archived-toggle" onClick={() => setShowArchived((v) => !v)}>
-            <svg
-              {...iconProps}
-              width={16}
-              height={16}
-              style={{ transform: showArchived ? 'rotate(90deg)' : 'none', transition: 'transform 150ms' }}
-            >
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-            Archived ({archivedConversations.length})
-          </button>
-          {showArchived && (
-            <div className="archived-list">
-              {archivedConversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  className={`conversation-item archived ${currentConversationId === conv.id ? 'active' : ''}`}
-                  onClick={() => onConversationSelect(conv.id)}
-                  onContextMenu={(e) => openMenu(e, conv.id, true)}
-                >
-                  <div className="conversation-content">
-                    <div className="conversation-title">{conv.title}</div>
-                    <div className="conversation-metadata">
-                      <span className="message-count">{conv.message_count} messages</span>
-                      <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {menu && (
         <>

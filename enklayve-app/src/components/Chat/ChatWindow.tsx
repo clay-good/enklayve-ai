@@ -48,7 +48,6 @@ interface ChatWindowProps {
   onSubmit: () => void;
   onStop: () => void;
   onOpenCitation?: (fileName: string) => void;
-  onSaveMessage?: (content: string) => void;
   onAttachFile?: () => void;
   onAttachFolder?: () => void;
   onRemoveDocument?: (id: number) => void;
@@ -67,7 +66,6 @@ export function ChatWindow({
   onSubmit,
   onStop,
   onOpenCitation,
-  onSaveMessage,
   onAttachFile,
   onAttachFolder,
   onRemoveDocument,
@@ -132,11 +130,6 @@ export function ChatWindow({
                 content={msg.content}
                 isStreaming={msg.isStreaming || false}
                 onOpenCitation={onOpenCitation}
-                onSave={
-                  msg.role === 'assistant' && onSaveMessage
-                    ? () => onSaveMessage(msg.content)
-                    : undefined
-                }
               />
             ))}
             {loading && (

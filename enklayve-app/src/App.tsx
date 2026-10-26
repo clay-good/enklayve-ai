@@ -673,32 +673,6 @@ function App() {
     }
   };
 
-  const handleSaveToFolder = async (content: string) => {
-    try {
-      let folder = await invoke<string | null>("get_working_folder");
-      if (!folder) {
-        const picked = await open({ directory: true, multiple: false });
-        if (!picked || typeof picked !== "string") return;
-        await invoke("set_working_folder", { path: picked });
-        folder = picked;
-      }
-      const name = `enklayve-answer-${Date.now()}.md`;
-      const path = await invoke<string>("save_to_working_folder", {
-        fileName: name,
-        contents: content,
-      });
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Saved to your working folder:\n\n\`${path}\`` },
-      ]);
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Could not save to your folder.\n\n${String(error)}` },
-      ]);
-    }
-  };
-
   const handleBackupComplete = (success: boolean, message: string) => {
     if (success && message.includes('restored')) {
       loadDocuments();
@@ -808,12 +782,12 @@ function App() {
           onSubmit={handleAskQuestion}
           onStop={handleStopGeneration}
           onOpenCitation={handleOpenCitation}
-          onSaveMessage={handleSaveToFolder}
           onAttachFile={handleDocumentUpload}
           onAttachFolder={handleFolderUpload}
           onRemoveDocument={handleDocumentDelete}
           webSearching={webSearching && generatingConvId === currentConversationId}
         />
+        {/* save-to-folder removed: chats are already saved & encrypted in-app */}
       </main>
     </div>
   );
