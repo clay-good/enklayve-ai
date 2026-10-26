@@ -17,8 +17,13 @@ pub struct WebResult {
 }
 
 fn client() -> Result<reqwest::Client> {
+    // A realistic browser User-Agent: DuckDuckGo's HTML endpoint returns far
+    // fewer (or no) results for a non-browser agent.
     reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (compatible; Enklayve)")
+        .user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        )
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .context("could not build web client")

@@ -358,7 +358,7 @@ async fn maybe_web_prompt(
         let _ = w.emit("web-search", serde_json::json!({ "query": question }));
     }
 
-    let results = crate::web::search(question, 4).await.unwrap_or_default();
+    let results = crate::web::search(question, 6).await.unwrap_or_default();
     let direct_urls = crate::web::extract_urls(question);
     if results.is_empty() && direct_urls.is_empty() {
         return None;
@@ -377,17 +377,26 @@ async fn maybe_web_prompt(
         }
     }
 
+    // Pull real content from several top results in parallel (not just the
+    // snippet), so the model can answer from actual page text — and so a value
+    // that only appears on result #3 or #4 (common for live figures) isn't
+    // missed. Fetches run concurrently to keep the extra coverage fast.
+    let fetch_count = results.len().min(4);
+    let pages: Vec<Option<String>> = futures::future::join_all(
+        results.iter().take(fetch_count).map(|r| async move {
+            crate::web::fetch_readable(&r.url, 2200)
+                .await
+                .ok()
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+        }),
+    )
+    .await;
+
     for (i, r) in results.iter().enumerate() {
         web_block.push_str(&format!("[{}]({})\n{}\n", r.title, r.url, r.snippet));
-        // Pull real content from the top results, not just the snippet, so the
-        // model can answer from actual page text instead of navigational blurbs.
-        if i < 2 {
-            if let Ok(page) = crate::web::fetch_readable(&r.url, 2500).await {
-                let page = page.trim();
-                if !page.is_empty() {
-                    web_block.push_str(&format!("Page content:\n{}\n", page));
-                }
-            }
+        if let Some(Some(page)) = pages.get(i) {
+            web_block.push_str(&format!("Page content:\n{}\n", page));
         }
         web_block.push('\n');
     }

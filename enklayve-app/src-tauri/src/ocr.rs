@@ -224,14 +224,16 @@ pub async fn extract_text_from_scanned_pdf(pdf_path: &Path, app_handle: Option<&
     let recognition_model = Model::load_file(&recognition_model_path)
         .context("Failed to load recognition model")?;
 
-    // Create OCR engine
+    // Create OCR engine (shared across threads for parallel page recognition)
     crate::logger::log_info("Initializing OCR engine...");
-    let engine = OcrEngine::new(OcrEngineParams {
-        detection_model: Some(detection_model),
-        recognition_model: Some(recognition_model),
-        ..Default::default()
-    })
-    .context("Failed to initialize OCR engine")?;
+    let engine = std::sync::Arc::new(
+        OcrEngine::new(OcrEngineParams {
+            detection_model: Some(detection_model),
+            recognition_model: Some(recognition_model),
+            ..Default::default()
+        })
+        .context("Failed to initialize OCR engine")?,
+    );
 
     // Convert PDF pages to images (emits its own "rendering" progress per page)
     let images = pdf_to_images(pdf_path, app_handle)
@@ -240,42 +242,46 @@ pub async fn extract_text_from_scanned_pdf(pdf_path: &Path, app_handle: Option<&
     let total = images.len();
     crate::logger::log_info(&format!("Processing {} page(s) with OCR...", total));
 
-    // Process each page with OCR
-    let mut all_text = String::new();
+    // Recognize every page in parallel across CPU cores — recognition is the slow
+    // half of OCR and each page is independent. collect() preserves page order;
+    // the atomic counter drives the progress bar as pages finish.
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let done = std::sync::Arc::new(AtomicUsize::new(0));
+    let page_texts = images
+        .par_iter()
+        .map(|img| -> Result<String> {
+            let rgb_image = img.to_rgb8();
+            let ocr_input = engine.prepare_input(ImageSource::from_bytes(
+                rgb_image.as_raw(),
+                rgb_image.dimensions(),
+            )?)?;
+            let word_rects = engine.detect_words(&ocr_input)?;
+            let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
+            let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
 
-    for (page_num, img) in images.iter().enumerate() {
-        crate::logger::log_info(&format!("OCR processing page {} of {}...", page_num + 1, total));
-        // Rendering used 5%..50%; OCR uses 50%..95% so the bar advances the whole way.
-        let progress = 50 + ((page_num as f32 / total.max(1) as f32) * 45.0) as u32;
-        emit("recognizing", format!("Reading page {} of {}…", page_num + 1, total), progress);
-
-        // Convert to RGB8
-        let rgb_image = img.to_rgb8();
-
-        // Prepare image for OCR
-        let ocr_input = engine.prepare_input(ImageSource::from_bytes(
-            rgb_image.as_raw(),
-            rgb_image.dimensions(),
-        )?)?;
-
-        // Run OCR
-        let word_rects = engine.detect_words(&ocr_input)?;
-        let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
-        let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
-
-        // Extract text from results
-        for line_opt in line_texts.iter() {
-            if let Some(line) = line_opt {
-                // TextLine implements Display, so we can use to_string()
-                all_text.push_str(&line.to_string());
-                all_text.push('\n');
+            let mut s = String::new();
+            for line_opt in line_texts.iter() {
+                if let Some(line) = line_opt {
+                    s.push_str(&line.to_string());
+                    s.push('\n');
+                }
             }
-        }
 
-        if page_num < images.len() - 1 {
-            all_text.push_str("\n--- Page Break ---\n\n");
-        }
-    }
+            let n = done.fetch_add(1, Ordering::SeqCst) + 1;
+            let progress = 50 + ((n as f32 / total.max(1) as f32) * 45.0) as u32;
+            if let Some(app) = app_handle {
+                let _ = app.emit("ocr-progress", serde_json::json!({
+                    "stage": "recognizing",
+                    "message": format!("Read {} of {} pages…", n, total),
+                    "progress": progress,
+                }));
+            }
+            Ok(s)
+        })
+        .collect::<Result<Vec<String>>>()?;
+
+    let all_text = page_texts.join("\n--- Page Break ---\n\n");
 
     if all_text.trim().is_empty() {
         anyhow::bail!("OCR did not extract any text from the PDF. The image quality may be too low, or the document may not contain readable text.");

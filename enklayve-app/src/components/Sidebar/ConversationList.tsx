@@ -59,6 +59,7 @@ interface ConversationListProps {
   onConversationUnarchive: (id: number) => void;
   archivedConversations?: ConversationSummary[];
   generatingConvId?: number | null;
+  importingConvId?: number | null;
   queuedConvIds?: number[];
   onNewConversation: () => void;
   isDarkMode: boolean;
@@ -84,6 +85,7 @@ export function ConversationList({
   onConversationUnarchive,
   archivedConversations = [],
   generatingConvId = null,
+  importingConvId = null,
   queuedConvIds = [],
   onNewConversation,
   isDarkMode,
@@ -323,6 +325,8 @@ export function ConversationList({
                 </div>
                 {conv.id === generatingConvId ? (
                   <span className="chat-status generating" title="Answering…" />
+                ) : conv.id === importingConvId ? (
+                  <span className="chat-status generating" title="Indexing…" />
                 ) : queuedConvIds.includes(conv.id) ? (
                   <span className="chat-status queued" title="Queued" />
                 ) : null}

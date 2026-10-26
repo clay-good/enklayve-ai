@@ -127,9 +127,17 @@ metal = ["llama-cpp-2/metal"]
 gpu = ["cuda", "metal"]
 
 [profile.release]
-opt-level = "z"
+# Optimize for speed, not size: this app runs local ML inference (OCR, embeddings,
+# the LLM), where "z" (size) made numeric code many times slower than it needs to be.
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Dev builds keep the app crate unoptimized (fast incremental compiles, debuggable)
+# but optimize dependencies, so OCR / embeddings / inference aren't crippled while
+# developing. First build after this change recompiles deps once, then it's cached.
+[profile.dev.package."*"]
+opt-level = 2
 

@@ -853,6 +853,7 @@ function App() {
             onConversationUnarchive={handleConversationUnarchive}
             archivedConversations={archivedConversations}
             generatingConvId={generatingConvId}
+            importingConvId={importConvId}
             queuedConvIds={queuedConvIds}
             onNewConversation={createNewConversation}
             isDarkMode={isDarkMode}
