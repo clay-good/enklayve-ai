@@ -66,11 +66,11 @@
   padding: var(--space-3) var(--space-4);
   margin-bottom: var(--space-3);
   background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-primary);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
   font-size: var(--font-size-base);
   text-align: left;
-  border-left: 3px solid var(--color-accent-primary);
   transition: all var(--transition-base) var(--easing-ease-in-out);
 }
 
