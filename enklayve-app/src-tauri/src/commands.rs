@@ -1400,6 +1400,25 @@ pub async fn delete_message(
         .map_err(|e| e.to_string())
 }
 
+/// Delete the most recent assistant answer in a conversation (for "regenerate").
+#[tauri::command]
+pub async fn delete_last_assistant_message(
+    app_handle: tauri::AppHandle,
+    conversation_id: i64,
+) -> Result<(), String> {
+    let conn = database::get_connection(&app_handle)
+        .map_err(|e| e.to_string())?;
+    conversations::delete_last_assistant_message(&conn, conversation_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Whether a dropped path is a folder (vs a file), so the UI can route a
+/// drag-and-drop to folder import or single-file import.
+#[tauri::command]
+pub fn is_directory(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
 /// Update conversation title
 #[tauri::command]
 pub async fn update_conversation_title(

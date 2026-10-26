@@ -108,6 +108,39 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+/* Drag-and-drop overlay */
+.drop-overlay {
+  position: absolute;
+  inset: var(--space-4);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-bg-primary) 80%, transparent);
+  border: 2px dashed var(--color-accent-primary);
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+}
+
+.drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.drop-overlay-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.drop-overlay-sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 ::-webkit-scrollbar {

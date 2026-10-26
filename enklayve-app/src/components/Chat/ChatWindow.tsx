@@ -27,6 +27,9 @@ const IconClose = () => (
 const IconArrowDown = () => (
   <svg {...svgProps} width={16} height={16}><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
 );
+const IconRefresh = () => (
+  <svg {...svgProps} width={15} height={15}><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></svg>
+);
 
 // A small mm:ss timer counting up from an absolute start time. Because `since`
 // lives in App state (not component mount time), the elapsed time stays accurate
@@ -73,6 +76,7 @@ interface ChatWindowProps {
   onQuestionChange: (value: string) => void;
   onSubmit: () => void;
   onStarterPrompt?: (text: string) => void;
+  onRegenerate?: () => void;
   onStop: (clearQueue?: boolean) => void;
   hasQueue?: boolean;
   onOpenCitation?: (fileName: string) => void;
@@ -99,6 +103,7 @@ export function ChatWindow({
   onQuestionChange,
   onSubmit,
   onStarterPrompt,
+  onRegenerate,
   onStop,
   hasQueue = false,
   onOpenCitation,
@@ -214,6 +219,14 @@ export function ChatWindow({
                   {webSearching ? 'Searching the web…' : 'Generating answer…'}
                 </span>
                 <ElapsedTime since={genStartedAt ?? Date.now()} />
+              </div>
+            )}
+            {!loading && onRegenerate && messages[messages.length - 1]?.role === 'assistant' && (
+              <div className="regenerate-row">
+                <button className="regenerate-button" onClick={onRegenerate} title="Re-answer the last question">
+                  <IconRefresh />
+                  <span>Regenerate</span>
+                </button>
               </div>
             )}
           </>

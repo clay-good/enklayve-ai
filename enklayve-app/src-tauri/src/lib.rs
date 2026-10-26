@@ -79,6 +79,8 @@ pub fn run() {
             commands::add_message,
             commands::delete_conversation,
             commands::delete_message,
+            commands::delete_last_assistant_message,
+            commands::is_directory,
             commands::update_conversation_title,
             commands::search_conversations,
             commands::search_archived_conversations,

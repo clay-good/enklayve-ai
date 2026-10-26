@@ -319,6 +319,19 @@ pub fn delete_message(conn: &Connection, message_id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Delete the most recent assistant message in a conversation (used by "regenerate").
+pub fn delete_last_assistant_message(conn: &Connection, conversation_id: i64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM messages WHERE id = (
+             SELECT id FROM messages
+             WHERE conversation_id = ?1 AND role = 'assistant'
+             ORDER BY timestamp DESC, id DESC LIMIT 1
+         )",
+        [conversation_id],
+    )?;
+    Ok(())
+}
+
 /// Get conversation context (last N messages formatted for prompt)
 pub fn get_conversation_context(
     conn: &Connection,

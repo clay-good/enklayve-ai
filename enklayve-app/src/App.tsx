@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { WelcomeFlow } from "./components/Onboarding/WelcomeFlow";
 import { ChatWindow } from "./components/Chat/ChatWindow";
@@ -103,6 +104,7 @@ function App() {
   const [downloadingModel, setDownloadingModel] = useState<{ fileName: string; percent: number } | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [appVersion, setAppVersion] = useState<string>("");
+  const [dropActive, setDropActive] = useState(false);
 
   // Security state
   const [isLocked, setIsLocked] = useState(false);
@@ -183,6 +185,35 @@ function App() {
     });
     return () => {
       if (unlistenWeb) unlistenWeb();
+    };
+  }, []);
+
+  // Drag a file or folder onto the window to attach it to the current chat.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setDropActive(true);
+        } else if (p.type === "leave") {
+          setDropActive(false);
+        } else if (p.type === "drop") {
+          setDropActive(false);
+          const paths = p.paths ?? [];
+          (async () => {
+            for (const path of paths) {
+              await ingestPath(path);
+            }
+          })();
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      if (unlisten) unlisten();
     };
   }, []);
 
@@ -314,6 +345,9 @@ function App() {
 
   // Return the current conversation, creating one if the user hasn't started yet.
   async function ensureConversation(): Promise<number> {
+    // Use the ref so callers invoked from long-lived listeners (drag-drop) see
+    // the chat that's actually on screen, not a stale captured value.
+    if (viewConvRef.current) return viewConvRef.current;
     if (currentConversationId) return currentConversationId;
     const newId = await invoke<number>("create_conversation", { title: "New Conversation" });
     setCurrentConversationId(newId);
@@ -610,10 +644,30 @@ function App() {
     // runGeneration's own cleanup keeps whatever was produced and resets state.
   }
 
+  // Re-answer the last question: drop the last answer and generate a fresh one
+  // (handy after switching to a smarter model). The question is not re-sent.
+  async function handleRegenerate() {
+    const convId = viewConvRef.current;
+    if (!convId || generatingConvId !== null || downloadingModel) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    setMessages((prev) => {
+      const idx = prev.map((m) => m.role).lastIndexOf("assistant");
+      return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
+    });
+    await invoke("delete_last_assistant_message", { conversationId: convId }).catch(() => {});
+    queueRef.current.push({ convId, question: lastUser.content });
+    setQueuedConvIds(queueRef.current.map((q) => q.convId));
+    processQueue();
+  }
+
   async function handleFolderUpload() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || typeof selected !== "string") return;
+    await ingestFolder(selected);
+  }
 
+  async function ingestFolder(folderPath: string) {
     let unlisten: (() => void) | null = null;
     try {
       unlisten = await listen<{ processed: number; total: number; current_file: string }>(
@@ -628,7 +682,7 @@ function App() {
         ingested: string[];
         failed: { file_name: string; error: string }[];
         total: number;
-      }>("upload_folder", { folderPath: selected, conversationId: convId });
+      }>("upload_folder", { folderPath, conversationId: convId });
 
       await loadDocuments(convId);
 
@@ -668,36 +722,47 @@ function App() {
     });
 
     if (selected && typeof selected === "string") {
-      try {
-        const convId = await ensureConversation();
-        setImportConvId(convId);
-        setImportStartedAt(Date.now());
-        await invoke<DocumentMetadata>("upload_document", {
-          filePath: selected,
-          conversationId: convId,
-        });
-        await loadDocuments(convId);
-      } catch (error) {
-        console.error("Failed to upload document:", error);
+      await ingestFile(selected);
+    }
+  }
 
-        // Show error message in chat
-        let errorText = "Failed to upload document.";
-        if (typeof error === 'string') {
-          errorText += `\n\n${error}`;
-        } else if (error && typeof error === 'object' && 'message' in error) {
-          errorText += `\n\n${(error as Error).message}`;
-        }
-
-        const errorMessage: Message = {
-          role: "assistant",
-          content: errorText,
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-      } finally {
-        setOcrProgress(null);
-        setImportConvId(null);
-        setImportStartedAt(null);
+  async function ingestFile(filePath: string) {
+    try {
+      const convId = await ensureConversation();
+      setImportConvId(convId);
+      setImportStartedAt(Date.now());
+      await invoke<DocumentMetadata>("upload_document", {
+        filePath,
+        conversationId: convId,
+      });
+      await loadDocuments(convId);
+    } catch (error) {
+      console.error("Failed to upload document:", error);
+      let errorText = "Failed to upload document.";
+      if (typeof error === 'string') {
+        errorText += `\n\n${error}`;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        errorText += `\n\n${(error as Error).message}`;
       }
+      setMessages((prev) => [...prev, { role: "assistant", content: errorText }]);
+    } finally {
+      setOcrProgress(null);
+      setImportConvId(null);
+      setImportStartedAt(null);
+    }
+  }
+
+  // Route a dropped path to folder or single-file import.
+  async function ingestPath(path: string) {
+    try {
+      const isDir = await invoke<boolean>("is_directory", { path });
+      if (isDir) {
+        await ingestFolder(path);
+      } else {
+        await ingestFile(path);
+      }
+    } catch (error) {
+      console.error("Failed to ingest dropped path:", error);
     }
   }
 
@@ -953,6 +1018,7 @@ function App() {
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
           onStarterPrompt={(text) => handleAskQuestion(text)}
+          onRegenerate={handleRegenerate}
           onStop={handleStopGeneration}
           hasQueue={queuedConvIds.length > 0}
           onOpenCitation={handleOpenCitation}
@@ -961,7 +1027,14 @@ function App() {
           onRemoveDocument={handleDocumentDelete}
           webSearching={webSearching && generatingConvId === currentConversationId}
         />
-        {/* save-to-folder removed: chats are already saved & encrypted in-app */}
+        {dropActive && (
+          <div className="drop-overlay">
+            <div className="drop-overlay-card">
+              <span className="drop-overlay-title">Drop to attach</span>
+              <span className="drop-overlay-sub">Files and folders are added to this chat</span>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
