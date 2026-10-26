@@ -89,13 +89,14 @@ pub async fn get_download_info(url: String) -> Result<DownloadInfo, String> {
 pub async fn download_model(
     url: String,
     model_name: String,
+    checksum: Option<String>,
     app_handle: tauri::AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
     let downloader = ModelDownloader::new().map_err(|e| e.to_string())?;
 
     let path = downloader
-        .download_model(&url, &model_name, &app_handle, move |progress| {
+        .download_model(&url, &model_name, checksum.as_deref(), &app_handle, move |progress| {
             // Emit progress event to frontend
             window.emit("download-progress", progress).ok();
         })

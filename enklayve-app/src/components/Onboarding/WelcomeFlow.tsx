@@ -10,6 +10,7 @@ interface BestModelSelection {
     size_gb: number;
     file_name: string;
     repo_url: string;
+    checksum: string;
   };
   explanation: string;
 }
@@ -149,6 +150,7 @@ export function WelcomeFlow({ onComplete }: WelcomeFlowProps) {
       await invoke('download_model', {
         url: bestModel.model.repo_url,
         modelName: bestModel.model.file_name,
+        checksum: bestModel.model.checksum || null,
       });
 
       await invoke('mark_model_downloaded');
@@ -181,12 +183,19 @@ export function WelcomeFlow({ onComplete }: WelcomeFlowProps) {
   };
 
   if (error) {
+    // A download that was interrupted resumes from where it left off, so the
+    // primary action during download is Resume rather than a fresh start.
+    const wasDownloading = step === 'downloading';
     return (
       <div className="welcome-flow">
         <div className="welcome-content error">
-          <h1>Error</h1>
+          <h1>{wasDownloading ? 'Download interrupted' : 'Error'}</h1>
           <p>{error}</p>
-          <button onClick={() => setError('')}>Try Again</button>
+          {wasDownloading ? (
+            <button onClick={handleStartDownload}>Resume download</button>
+          ) : (
+            <button onClick={() => setError('')}>Try Again</button>
+          )}
         </div>
       </div>
     );

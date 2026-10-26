@@ -41,17 +41,19 @@ impl ModelDownloader {
         &self,
         url: &str,
         model_name: &str,
+        expected_checksum: Option<&str>,
         app_handle: &AppHandle,
         progress_callback: impl Fn(DownloadProgress) + Send + Sync + 'static,
     ) -> Result<PathBuf> {
-        // Get models directory
+        use tokio::fs::OpenOptions;
+        use reqwest::header::{RANGE, CONTENT_RANGE};
+
         let models_dir = get_models_directory(app_handle)?;
         std::fs::create_dir_all(&models_dir)?;
 
-        // Construct file path
         let file_path = models_dir.join(model_name);
 
-        // Check if file already exists AND is valid
+        // Already have a complete, valid model? Use it.
         if file_path.exists() {
             if is_valid_model_file(&file_path) {
                 crate::logger::log_info(&format!(
@@ -60,86 +62,115 @@ impl ModelDownloader {
                     std::fs::metadata(&file_path)?.len() / 1_000_000
                 ));
                 return Ok(file_path);
-            } else {
-                crate::logger::log_warn(&format!(
-                    "Found corrupted model file {}, will re-download",
-                    model_name
-                ));
-                // Delete corrupted file before re-downloading
-                let _ = std::fs::remove_file(&file_path);
             }
+            crate::logger::log_warn(&format!(
+                "Found corrupted model file {}, re-downloading",
+                model_name
+            ));
+            let _ = std::fs::remove_file(&file_path);
         }
 
-        // Construct proper HuggingFace download URL
-        // If URL is a repo URL (https://huggingface.co/org/repo), convert to download URL
+        // Partial downloads accumulate in a .part file so an interrupted
+        // download can resume instead of starting over.
+        let part_path = models_dir.join(format!("{}.part", model_name));
+
+        // A .part must still look like a GGUF from byte 0; otherwise it is a
+        // stale error page or garbage, and we start fresh.
+        let mut resume_from: u64 = match std::fs::metadata(&part_path) {
+            Ok(m) if m.len() > 0 && starts_with_gguf_magic(&part_path) => m.len(),
+            Ok(_) => {
+                let _ = std::fs::remove_file(&part_path);
+                0
+            }
+            Err(_) => 0,
+        };
+
+        // Convert a HuggingFace repo URL into a direct download URL.
         let download_url = if url.contains("huggingface.co") && !url.contains("/resolve/") {
-            // Convert repo URL to download URL
-            // From: https://huggingface.co/unsloth/Qwen3-14B-GGUF
-            // To: https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf
             format!("{}/resolve/main/{}", url.trim_end_matches('/'), model_name)
         } else {
             url.to_string()
         };
 
         crate::logger::log_info(&format!(
-            "Starting download: {} from {}",
-            model_name,
-            download_url
+            "Downloading {} from {} (resuming at {} bytes)",
+            model_name, download_url, resume_from
         ));
 
-        // Start download
-        let response = self.client
-            .get(&download_url)
-            .send()
-            .await
-            .context("Failed to initiate download")?;
+        let mut request = self.client.get(&download_url);
+        if resume_from > 0 {
+            request = request.header(RANGE, format!("bytes={}-", resume_from));
+        }
+        let response = request.send().await.context("Failed to initiate download")?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("Download failed with status: {}", response.status());
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("Download failed with status: {}", status);
         }
 
-        let total_size = response
-            .content_length()
-            .context("Failed to get content length")?;
+        // Decide the total size and whether the server honored our resume.
+        let (total_size, append) = if resume_from > 0 && status.as_u16() == 206 {
+            // Partial content: content-length is the REMAINING bytes. Prefer the
+            // authoritative total from Content-Range when present.
+            let total = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.rsplit('/').next())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or_else(|| resume_from + response.content_length().unwrap_or(0));
+            (total, true)
+        } else {
+            // Server ignored the range (or there was nothing to resume): restart.
+            if resume_from > 0 {
+                crate::logger::log_warn("Server ignored resume request; restarting download");
+                resume_from = 0;
+            }
+            (response.content_length().unwrap_or(0), false)
+        };
 
-        // Create file
-        let mut file = File::create(&file_path)
-            .await
-            .context("Failed to create file")?;
+        let mut file = if append {
+            OpenOptions::new()
+                .append(true)
+                .open(&part_path)
+                .await
+                .context("Failed to open partial file for resume")?
+        } else {
+            File::create(&part_path)
+                .await
+                .context("Failed to create download file")?
+        };
 
-        // Download with progress tracking (cleanup on error)
+        // Stream to disk with throttled progress updates.
         let download_result: Result<u64> = async {
             let mut stream = response.bytes_stream();
-            let mut downloaded: u64 = 0;
+            let mut downloaded: u64 = resume_from;
+            let start_bytes = resume_from;
             let start_time = std::time::Instant::now();
             let mut last_update = start_time;
 
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.context("Failed to read chunk")?;
-                file.write_all(&chunk)
-                    .await
-                    .context("Failed to write chunk")?;
-
+                file.write_all(&chunk).await.context("Failed to write chunk")?;
                 downloaded += chunk.len() as u64;
 
-                // Update progress every 500ms
                 let now = std::time::Instant::now();
                 if now.duration_since(last_update).as_millis() > 500 {
                     let elapsed = now.duration_since(start_time).as_secs_f32();
                     let speed_mb_per_sec = if elapsed > 0.0 {
-                        (downloaded as f32 / 1_048_576.0) / elapsed
+                        ((downloaded - start_bytes) as f32 / 1_048_576.0) / elapsed
                     } else {
                         0.0
                     };
-
                     let speed_mbps = speed_mb_per_sec * 8.0;
-
-                    let percentage = (downloaded as f32 / total_size as f32) * 100.0;
-
+                    let percentage = if total_size > 0 {
+                        (downloaded as f32 / total_size as f32) * 100.0
+                    } else {
+                        0.0
+                    };
                     let bytes_remaining = total_size.saturating_sub(downloaded);
                     let estimated_seconds_remaining = if speed_mb_per_sec > 0.0 {
-                        let mb_remaining = bytes_remaining as f32 / 1_048_576.0;
-                        (mb_remaining / speed_mb_per_sec) as u64
+                        (bytes_remaining as f32 / 1_048_576.0 / speed_mb_per_sec) as u64
                     } else {
                         0
                     };
@@ -161,42 +192,61 @@ impl ModelDownloader {
             Ok(downloaded)
         }.await;
 
-        // If download failed, clean up partial file
+        // On a mid-stream error, KEEP the .part file so the next attempt resumes.
         let downloaded = match download_result {
             Ok(bytes) => bytes,
             Err(e) => {
-                crate::logger::log_error(&format!("Download failed: {}, cleaning up partial file", e));
-                let _ = tokio::fs::remove_file(&file_path).await;
+                crate::logger::log_warn(&format!(
+                    "Download interrupted ({}); keeping partial file to resume later",
+                    e
+                ));
+                let _ = file.flush().await;
                 return Err(e);
             }
         };
 
-        // Verify the whole file arrived: a dropped connection can end the
-        // stream early without erroring, leaving a truncated model on disk.
+        // A dropped connection can end the stream early without erroring. Keep
+        // the partial file and report a resumable error.
         if total_size > 0 && downloaded != total_size {
-            crate::logger::log_error(&format!(
-                "Download incomplete: {} ({} of {} bytes)",
-                model_name, downloaded, total_size
+            crate::logger::log_warn(&format!(
+                "Download incomplete: {} of {} bytes; will resume on next attempt",
+                downloaded, total_size
             ));
-            let _ = std::fs::remove_file(&file_path);
             anyhow::bail!(
-                "Download incomplete: received {} of {} bytes",
-                downloaded,
-                total_size
+                "Download was interrupted ({} of {} bytes). It will resume where it \
+                 left off when you try again.",
+                downloaded, total_size
             );
         }
 
-        // Verify file was downloaded correctly
-        if !is_valid_model_file(&file_path) {
-            crate::logger::log_error(&format!(
-                "Download completed but file is invalid: {} (size: {} bytes)",
-                model_name,
-                std::fs::metadata(&file_path)?.len()
-            ));
-            // Clean up invalid file
-            let _ = std::fs::remove_file(&file_path);
-            anyhow::bail!("Downloaded file is corrupted or incomplete");
+        // Completed: validate the finished file before promoting it.
+        if !is_valid_model_file(&part_path) {
+            crate::logger::log_error("Downloaded file failed the integrity check");
+            let _ = std::fs::remove_file(&part_path);
+            anyhow::bail!("The downloaded model was corrupted. Please try again.");
         }
+
+        // Optional cryptographic verification when a checksum is known.
+        if let Some(expected) = expected_checksum.filter(|c| !c.is_empty()) {
+            match self.verify_checksum(&part_path, expected).await {
+                Ok(true) => crate::logger::log_info("Model checksum verified"),
+                Ok(false) => {
+                    let _ = std::fs::remove_file(&part_path);
+                    anyhow::bail!(
+                        "The downloaded model failed checksum verification. Please try again."
+                    );
+                }
+                Err(e) => crate::logger::log_warn(&format!(
+                    "Could not verify checksum ({}); relying on the integrity check",
+                    e
+                )),
+            }
+        }
+
+        // Promote the completed .part to its final name.
+        tokio::fs::rename(&part_path, &file_path)
+            .await
+            .context("Failed to finalize the downloaded model")?;
 
         crate::logger::log_info(&format!(
             "Download completed successfully: {} ({} MB)",
@@ -204,7 +254,6 @@ impl ModelDownloader {
             std::fs::metadata(&file_path)?.len() / 1_000_000
         ));
 
-        // Final progress update
         progress_callback(DownloadProgress {
             total_bytes: total_size,
             downloaded_bytes: downloaded,
@@ -326,6 +375,19 @@ pub async fn list_downloaded_models(app_handle: &AppHandle) -> Result<Vec<Downlo
 
     crate::logger::log_info(&format!("Total models found: {}", models.len()));
     Ok(models)
+}
+
+/// Does the file begin with the GGUF magic bytes? Used to decide whether a
+/// leftover `.part` file is a real partial model worth resuming.
+fn starts_with_gguf_magic(path: &Path) -> bool {
+    use std::io::Read;
+    match std::fs::File::open(path) {
+        Ok(mut f) => {
+            let mut magic = [0u8; 4];
+            f.read_exact(&mut magic).is_ok() && &magic == b"GGUF"
+        }
+        Err(_) => false,
+    }
 }
 
 /// Validate that a model file is not corrupted.

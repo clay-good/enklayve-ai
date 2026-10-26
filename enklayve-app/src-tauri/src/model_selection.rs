@@ -10,44 +10,70 @@ pub struct BestModelSelection {
 
 pub fn get_best_model_for_hardware(hardware: &HardwareProfile) -> BestModelSelection {
     let ram_gb = hardware.ram_total_gb;
+    let storage_gb = hardware.storage_available_gb;
 
-    let (model_name, explanation_reason) = if ram_gb >= 64.0 {
-        (
-            "Qwen3 32B (Q4)",
-            "maximum intelligence for your high-end system"
-        )
+    // Models from most to least capable.
+    let ordered = [
+        "Qwen3 32B (Q4)",
+        "Qwen3 14B (Q4)",
+        "Qwen3 8B (Q4)",
+        "Qwen3 4B (Q4)",
+        "Qwen3 1.7B (Q4)",
+    ];
+
+    // The best tier this machine's RAM supports.
+    let ram_tier = if ram_gb >= 64.0 {
+        0
     } else if ram_gb >= 32.0 {
-        (
-            "Qwen3 14B (Q4)",
-            "very smart model for your system"
-        )
+        1
     } else if ram_gb >= 16.0 {
-        (
-            "Qwen3 8B (Q4)",
-            "balanced intelligence and speed - recommended for most users"
-        )
+        2
     } else if ram_gb >= 8.0 {
-        (
-            "Qwen3 4B (Q4)",
-            "fast and efficient for your system"
-        )
+        3
     } else {
-        (
-            "Qwen3 1.7B (Q4)",
-            "lightweight model for minimal hardware"
-        )
+        4
     };
 
-    let model = find_model_by_name(model_name)
-        .unwrap_or_else(|| get_fallback_model());
+    // Leave headroom so we never fill the disk completely.
+    const DISK_HEADROOM_GB: f64 = 2.0;
+
+    // From the RAM tier downward, pick the first model that also fits on disk.
+    let mut chosen: Option<ModelInfo> = None;
+    let mut disk_constrained = false;
+    for name in ordered.iter().skip(ram_tier) {
+        if let Some(m) = find_model_by_name(name) {
+            if (m.size_gb as f64 + DISK_HEADROOM_GB) <= storage_gb {
+                chosen = Some(m);
+                break;
+            }
+            // RAM could run it, but the disk can't hold it: step down.
+            disk_constrained = true;
+        }
+    }
+
+    let model = chosen.unwrap_or_else(|| {
+        find_model_by_name("Qwen3 1.7B (Q4)").unwrap_or_else(get_fallback_model)
+    });
+
+    let reason = match model.name.as_str() {
+        "Qwen3 32B (Q4)" => "maximum intelligence for your high-end system",
+        "Qwen3 14B (Q4)" => "a very smart model for your system",
+        "Qwen3 8B (Q4)" => "balanced intelligence and speed - recommended for most users",
+        "Qwen3 4B (Q4)" => "fast and efficient for your system",
+        _ => "a lightweight model that fits your system",
+    };
 
     let hardware_summary = hardware.get_hardware_summary();
-    let explanation = format!("Best {} for your {}", explanation_reason, hardware_summary);
+    let explanation = if disk_constrained {
+        format!(
+            "Best model that fits your {:.0} GB of free disk space: {} for your {}",
+            storage_gb, reason, hardware_summary
+        )
+    } else {
+        format!("Best {} for your {}", reason, hardware_summary)
+    };
 
-    BestModelSelection {
-        model,
-        explanation,
-    }
+    BestModelSelection { model, explanation }
 }
 
 fn find_model_by_name(name: &str) -> Option<ModelInfo> {
@@ -131,5 +157,30 @@ mod tests {
         let selection = get_best_model_for_hardware(&hardware);
         assert!(selection.model.name.contains("1.7B"));
         assert!(selection.model.size_gb <= 1.5);
+    }
+
+    #[test]
+    fn test_disk_constrained_steps_down() {
+        // Plenty of RAM for the 8B pick, but only 6 GB free disk.
+        let mut hardware = create_test_hardware(16.0);
+        hardware.storage_available_gb = 6.0;
+        let selection = get_best_model_for_hardware(&hardware);
+        // 8B (4.7) + 2 GB headroom = 6.7 > 6, so it must step down to 4B (2.3).
+        assert!(selection.model.name.contains("4B"), "got {}", selection.model.name);
+        assert!((selection.model.size_gb as f64 + 2.0) <= 6.0);
+    }
+
+    #[test]
+    fn test_never_exceeds_disk() {
+        for ram in [8.0, 16.0, 32.0, 64.0] {
+            let mut hardware = create_test_hardware(ram);
+            hardware.storage_available_gb = 5.0;
+            let selection = get_best_model_for_hardware(&hardware);
+            assert!(
+                selection.model.size_gb <= 5.0,
+                "{} GB model chosen for 5 GB disk",
+                selection.model.size_gb
+            );
+        }
     }
 }
