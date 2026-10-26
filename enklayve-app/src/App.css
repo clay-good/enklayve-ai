@@ -127,3 +127,20 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-primary);
 }
+
+/* Browser surfaces themed from the palette (not left to browser defaults) */
+::selection {
+  background: color-mix(in srgb, var(--color-accent-primary) 32%, transparent);
+  color: var(--color-text-primary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+input,
+textarea {
+  caret-color: var(--color-accent-primary);
+}

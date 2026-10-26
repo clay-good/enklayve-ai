@@ -3,6 +3,33 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import './ConversationList.css';
 
+const iconProps = {
+  width: 18,
+  height: 18,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+};
+
+const IconLock = () => (
+  <svg {...iconProps}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+);
+const IconUnlock = () => (
+  <svg {...iconProps}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" /></svg>
+);
+const IconGlobe = () => (
+  <svg {...iconProps}><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18" /><path d="M12 3a15 15 0 0 0 0 18" /></svg>
+);
+const IconSun = () => (
+  <svg {...iconProps}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+);
+const IconMoon = () => (
+  <svg {...iconProps}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+);
+
 interface ConversationSummary {
   id: number;
   title: string;
@@ -25,6 +52,8 @@ interface ConversationListProps {
   onBackupComplete: (success: boolean, message: string) => void;
   onSecuritySettings?: () => void;
   securityEnabled?: boolean;
+  webAccess: string;
+  onToggleWeb: () => void;
 }
 
 export function ConversationList({
@@ -41,6 +70,8 @@ export function ConversationList({
   onBackupComplete,
   onSecuritySettings,
   securityEnabled,
+  webAccess,
+  onToggleWeb,
 }: ConversationListProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -161,21 +192,32 @@ export function ConversationList({
         >
           {isRestoring ? 'Importing...' : 'Import'}
         </button>
+        <div className="toolbar-spacer" />
         {onSecuritySettings && (
           <button
-            className={`text-button ${securityEnabled ? 'security-enabled' : ''}`}
+            className={`icon-button ${securityEnabled ? 'is-on' : ''}`}
             onClick={onSecuritySettings}
-            title={securityEnabled ? "Security: Enabled" : "Security Settings"}
+            title={securityEnabled ? "Security: on" : "Security settings"}
+            aria-label="Security settings"
           >
-            {securityEnabled ? '🔒' : '🔓'}
+            {securityEnabled ? <IconLock /> : <IconUnlock />}
           </button>
         )}
         <button
-          className="text-button"
-          onClick={onThemeToggle}
-          title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          className={`icon-button ${webAccess === 'enabled' ? 'is-on' : ''}`}
+          onClick={onToggleWeb}
+          title={webAccess === 'enabled' ? "Web search: on" : "Web search: off"}
+          aria-label="Toggle web search"
         >
-          {isDarkMode ? "Light" : "Dark"}
+          <IconGlobe />
+        </button>
+        <button
+          className="icon-button"
+          onClick={onThemeToggle}
+          title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label="Toggle theme"
+        >
+          {isDarkMode ? <IconSun /> : <IconMoon />}
         </button>
       </div>
 

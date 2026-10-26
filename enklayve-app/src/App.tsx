@@ -730,6 +730,8 @@ function App() {
             onBackupComplete={handleBackupComplete}
             onSecuritySettings={() => setShowSecuritySettings(true)}
             securityEnabled={securityEnabled}
+            webAccess={webAccess}
+            onToggleWeb={handleToggleWeb}
           />
         </div>
 
@@ -744,8 +746,6 @@ function App() {
             onUpload={handleDocumentUpload}
             onUploadFolder={handleFolderUpload}
             folderProgress={folderProgress}
-            webAccess={webAccess}
-            onToggleWeb={handleToggleWeb}
           />
         </div>
       </aside>

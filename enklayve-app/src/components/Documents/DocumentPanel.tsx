@@ -26,8 +26,6 @@ interface DocumentPanelProps {
   onUpload: () => void;
   onUploadFolder: () => void;
   folderProgress: { processed: number; total: number; current_file: string } | null;
-  webAccess: string;
-  onToggleWeb: () => void;
 }
 
 export function DocumentPanel({
@@ -40,8 +38,6 @@ export function DocumentPanel({
   onUpload,
   onUploadFolder,
   folderProgress,
-  webAccess,
-  onToggleWeb,
 }: DocumentPanelProps) {
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -68,15 +64,6 @@ export function DocumentPanel({
           </button>
           <button className="upload-button" onClick={onUploadFolder} title="Add every supported file in a folder">
             + Folder
-          </button>
-          <button
-            className="web-toggle-button"
-            onClick={onToggleWeb}
-            title={webAccess === 'enabled'
-              ? 'Web search is on — click to turn off'
-              : 'Web search is off — click to turn on'}
-          >
-            {webAccess === 'enabled' ? '🌐 On' : '🌐 Off'}
           </button>
         </div>
       </div>
