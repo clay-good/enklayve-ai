@@ -308,18 +308,17 @@ impl HardwareProfile {
             999 // Use percentage allocation below
         };
 
-        // Apple Silicon with unified memory architecture
+        // Apple Silicon with unified memory architecture: the GPU and CPU share
+        // the same RAM, so there is no separate VRAM budget to stay under.
+        // Offloading every layer is almost always fastest — any layer left on the
+        // CPU forces a per-token round trip that drags generation down. The model
+        // selection already right-sizes the model to this machine's RAM, so if it
+        // loaded, it fits. Only fall back to CPU on very low-memory machines.
         if self.is_apple_silicon {
-            if self.ram_total_gb >= 64.0 {
-                return max_layers; // 100% on GPU (ultra high-end)
-            } else if self.ram_total_gb >= 32.0 {
-                return std::cmp::min(max_layers, (max_layers as f32 * 0.95) as u32); // 95% on GPU
-            } else if self.ram_total_gb >= 16.0 {
-                return std::cmp::min(max_layers, (max_layers as f32 * 0.90) as u32); // 90% on GPU
-            } else if self.ram_total_gb >= 8.0 {
-                return std::cmp::min(max_layers, (max_layers as f32 * 0.65) as u32); // 65% on GPU
+            if self.ram_total_gb >= 8.0 {
+                return max_layers; // 100% on GPU
             } else {
-                return 0; // Keep on CPU if low RAM
+                return 0; // Keep on CPU if very low RAM
             }
         }
 

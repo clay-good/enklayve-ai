@@ -542,7 +542,7 @@ pub async fn query_documents(
 
     // System prompt - honest about capabilities and knowledge cutoff
     let mut system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code.",
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. Be concise and get straight to the point: answer the question directly without restating it, without unnecessary preamble, and without repeating yourself. Give only as much detail as the question needs.",
         current_date
     );
     if not_in_docs {
@@ -782,7 +782,7 @@ pub async fn query_documents_streaming(
 
     // System prompt - honest about capabilities and knowledge cutoff
     let mut system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code.",
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. Be concise and get straight to the point: answer the question directly without restating it, without unnecessary preamble, and without repeating yourself. Give only as much detail as the question needs.",
         current_date
     );
     if not_in_docs {
