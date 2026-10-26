@@ -13,7 +13,7 @@ use tauri::Emitter;
 /// Minimum top cosine similarity for the user's documents to be considered
 /// relevant to a question. Below this we answer from general knowledge and say
 /// so, rather than citing weak, likely-irrelevant chunks. Tunable with real data.
-const RELEVANCE_THRESHOLD: f32 = 0.35;
+const RELEVANCE_THRESHOLD: f32 = 0.42;
 
 /// Simple greeting command for testing
 #[tauri::command]
@@ -329,12 +329,23 @@ async fn maybe_web_prompt(
     }
 
     let mut web_block = String::new();
-    for r in &results {
-        web_block.push_str(&format!("[{}]({})\n{}\n\n", r.title, r.url, r.snippet));
+    for (i, r) in results.iter().enumerate() {
+        web_block.push_str(&format!("[{}]({})\n{}\n", r.title, r.url, r.snippet));
+        // Pull real content from the top results, not just the snippet, so the
+        // model can answer from actual page text instead of navigational blurbs.
+        if i < 2 {
+            if let Ok(page) = crate::web::fetch_readable(&r.url, 2500).await {
+                let page = page.trim();
+                if !page.is_empty() {
+                    web_block.push_str(&format!("Page content:\n{}\n", page));
+                }
+            }
+        }
+        web_block.push('\n');
     }
 
     let system = format!(
-        "You are a helpful assistant. Today is {}. Answer the user's question using the web search results below. Cite your sources inline as Markdown links, for example [source](https://example.com). If the results do not answer the question, say so plainly. /no_think",
+        "You are a helpful assistant with live web access. Today is {}. Answer the user's question DIRECTLY using the web search results and page content below — extract the actual answer and state it. Do NOT tell the user to visit a website, and do NOT write code to fetch the information; just give the answer. Cite your sources inline as Markdown links, for example [source](https://example.com). If the results genuinely do not contain the answer, say so briefly. /no_think",
         current_date
     );
     let user = if conversation_context.is_empty() {
@@ -391,16 +402,20 @@ pub async fn query_documents(
     // Use hybrid search results directly - no reranking, no filtering
     // Let the model see all relevant context and decide what's useful
     // Relevance gate: only treat documents as relevant when the best semantic
-    // match clears a threshold. Otherwise answer honestly from general knowledge
-    // instead of forcing weak, misleading context into the prompt.
-    let docs_relevant = if should_retrieve && !search_results.is_empty() {
+    // match clears a threshold. Otherwise answer from general knowledge or the
+    // web instead of forcing weak, misleading context into the prompt.
+    let top_similarity = if should_retrieve && !search_results.is_empty() {
         crate::vector_search::top_semantic_similarity(&question, &app_handle)
             .await
             .unwrap_or(0.0)
-            >= RELEVANCE_THRESHOLD
     } else {
-        false
+        0.0
     };
+    let docs_relevant = top_similarity >= RELEVANCE_THRESHOLD;
+    crate::logger::log_info(&format!(
+        "Relevance gate: top_similarity={:.3}, threshold={:.2}, docs_relevant={}",
+        top_similarity, RELEVANCE_THRESHOLD, docs_relevant
+    ));
     let not_in_docs = has_documents && !docs_relevant;
 
     let max_chunks = 8; // Generous limit for thorough answers
@@ -415,19 +430,29 @@ pub async fn query_documents(
         filtered_chunks.len()
     ));
 
-    let context_chunks: Vec<String> = filtered_chunks
-        .iter()
-        .map(|r| {
-            // Increased to ~1000 words for thorough document coverage
-            // Qwen 7B has 8K context window - we have plenty of room
-            let words: Vec<&str> = r.chunk_text.split_whitespace().collect();
-            if words.len() > 1000 {
-                words[..1000].join(" ") + "..."
-            } else {
-                r.chunk_text.clone()
-            }
-        })
-        .collect();
+    // Budget the document context so the assembled prompt (context + system +
+    // history + question) stays within the model's context window. Previously
+    // 8 chunks x ~1000 words could exceed the limit and the model would bail.
+    const MAX_CONTEXT_WORDS: usize = 2000;
+    const MAX_WORDS_PER_CHUNK: usize = 500;
+    let mut used_words = 0usize;
+    let mut context_chunks: Vec<String> = Vec::new();
+    for r in &filtered_chunks {
+        if used_words >= MAX_CONTEXT_WORDS {
+            break;
+        }
+        let words: Vec<&str> = r.chunk_text.split_whitespace().collect();
+        let take = words
+            .len()
+            .min(MAX_WORDS_PER_CHUNK)
+            .min(MAX_CONTEXT_WORDS - used_words);
+        used_words += take;
+        if take < words.len() {
+            context_chunks.push(words[..take].join(" ") + "...");
+        } else {
+            context_chunks.push(r.chunk_text.clone());
+        }
+    }
 
     // Get conversation context if conversation_id provided (last 3 messages for continuity)
     let conversation_context = if let Some(conv_id) = conversation_id {
@@ -612,16 +637,20 @@ pub async fn query_documents_streaming(
     // Use hybrid search results directly - no reranking, no filtering
     // Let the model see all relevant context and decide what's useful
     // Relevance gate: only treat documents as relevant when the best semantic
-    // match clears a threshold. Otherwise answer honestly from general knowledge
-    // instead of forcing weak, misleading context into the prompt.
-    let docs_relevant = if should_retrieve && !search_results.is_empty() {
+    // match clears a threshold. Otherwise answer from general knowledge or the
+    // web instead of forcing weak, misleading context into the prompt.
+    let top_similarity = if should_retrieve && !search_results.is_empty() {
         crate::vector_search::top_semantic_similarity(&question, &app_handle)
             .await
             .unwrap_or(0.0)
-            >= RELEVANCE_THRESHOLD
     } else {
-        false
+        0.0
     };
+    let docs_relevant = top_similarity >= RELEVANCE_THRESHOLD;
+    crate::logger::log_info(&format!(
+        "Relevance gate: top_similarity={:.3}, threshold={:.2}, docs_relevant={}",
+        top_similarity, RELEVANCE_THRESHOLD, docs_relevant
+    ));
     let not_in_docs = has_documents && !docs_relevant;
 
     let max_chunks = 8; // Generous limit for thorough answers
@@ -636,19 +665,29 @@ pub async fn query_documents_streaming(
         filtered_chunks.len()
     ));
 
-    let context_chunks: Vec<String> = filtered_chunks
-        .iter()
-        .map(|r| {
-            // Increased to ~1000 words for thorough document coverage
-            // Qwen 7B has 8K context window - we have plenty of room
-            let words: Vec<&str> = r.chunk_text.split_whitespace().collect();
-            if words.len() > 1000 {
-                words[..1000].join(" ") + "..."
-            } else {
-                r.chunk_text.clone()
-            }
-        })
-        .collect();
+    // Budget the document context so the assembled prompt (context + system +
+    // history + question) stays within the model's context window. Previously
+    // 8 chunks x ~1000 words could exceed the limit and the model would bail.
+    const MAX_CONTEXT_WORDS: usize = 2000;
+    const MAX_WORDS_PER_CHUNK: usize = 500;
+    let mut used_words = 0usize;
+    let mut context_chunks: Vec<String> = Vec::new();
+    for r in &filtered_chunks {
+        if used_words >= MAX_CONTEXT_WORDS {
+            break;
+        }
+        let words: Vec<&str> = r.chunk_text.split_whitespace().collect();
+        let take = words
+            .len()
+            .min(MAX_WORDS_PER_CHUNK)
+            .min(MAX_CONTEXT_WORDS - used_words);
+        used_words += take;
+        if take < words.len() {
+            context_chunks.push(words[..take].join(" ") + "...");
+        } else {
+            context_chunks.push(r.chunk_text.clone());
+        }
+    }
 
     // Get conversation context if conversation_id provided (last 3 messages for continuity)
     let conversation_context = if let Some(conv_id) = conversation_id {

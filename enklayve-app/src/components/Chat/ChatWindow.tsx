@@ -33,6 +33,16 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the input with the prompt, up to a cap, then scroll inside it.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    }
+  }, [question]);
 
   useEffect(() => {
     // Only auto-scroll if user is at or near the bottom
@@ -102,6 +112,7 @@ export function ChatWindow({
 
       <div className="chat-input-area">
         <textarea
+          ref={textareaRef}
           className="chat-input"
           placeholder="Ask a question... (Shift+Enter for new line)"
           value={question}
@@ -109,6 +120,7 @@ export function ChatWindow({
           onKeyDown={handleKeyDown}
           disabled={loading}
           rows={1}
+          style={{ resize: 'none', maxHeight: '200px', overflowY: 'auto' }}
         />
         {loading ? (
           <button
