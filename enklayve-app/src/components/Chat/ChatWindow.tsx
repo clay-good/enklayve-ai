@@ -24,6 +24,16 @@ const IconFile = () => (
 const IconClose = () => (
   <svg {...svgProps} width={13} height={13}><path d="M18 6 6 18M6 6l12 12" /></svg>
 );
+const IconArrowDown = () => (
+  <svg {...svgProps} width={16} height={16}><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
+);
+
+const STARTER_PROMPTS = [
+  'What can Enklayve do for me?',
+  'Summarize the documents I add to this chat',
+  'Help me draft a professional email',
+  'Explain a complex topic in simple terms',
+];
 
 interface ChatDoc {
   id: number;
@@ -35,6 +45,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  timestamp?: number;
 }
 
 interface ChatWindowProps {
@@ -46,7 +57,9 @@ interface ChatWindowProps {
   ocrProgress?: { stage: string; message: string; progress: number } | null;
   onQuestionChange: (value: string) => void;
   onSubmit: () => void;
-  onStop: () => void;
+  onStarterPrompt?: (text: string) => void;
+  onStop: (clearQueue?: boolean) => void;
+  hasQueue?: boolean;
   onOpenCitation?: (fileName: string) => void;
   onAttachFile?: () => void;
   onAttachFolder?: () => void;
@@ -65,7 +78,9 @@ export function ChatWindow({
   ocrProgress,
   onQuestionChange,
   onSubmit,
+  onStarterPrompt,
   onStop,
+  hasQueue = false,
   onOpenCitation,
   onAttachFile,
   onAttachFolder,
@@ -74,10 +89,10 @@ export function ChatWindow({
   queued = false,
   busy = false,
 }: ChatWindowProps) {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [showJump, setShowJump] = useState(false);
 
   // Grow the input with the prompt, up to a cap, then scroll inside it.
   useEffect(() => {
@@ -95,15 +110,25 @@ export function ChatWindow({
   const handleMessagesScroll = () => {
     const el = chatMessagesRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    stickRef.current = atBottom;
+    setShowJump((prev) => (prev === !atBottom ? prev : !atBottom));
   };
 
   useEffect(() => {
     const el = chatMessagesRef.current;
     if (el && stickRef.current) {
       el.scrollTop = el.scrollHeight;
+      setShowJump(false);
     }
-  }, [messages]);
+  }, [messages, loading]);
+
+  const scrollToLatest = () => {
+    const el = chatMessagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    stickRef.current = true;
+    setShowJump(false);
+  };
 
   const submit = () => {
     stickRef.current = true; // sending always jumps to the latest
@@ -132,6 +157,18 @@ export function ChatWindow({
               <li>Works offline; optional web search sends only your question, never your documents</li>
               <li>No telemetry, no tracking, no API keys - private and free forever</li>
             </ul>
+            <div className="starter-prompts">
+              {STARTER_PROMPTS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className="starter-prompt"
+                  onClick={() => onStarterPrompt?.(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           <>
@@ -140,24 +177,32 @@ export function ChatWindow({
                 key={idx}
                 role={msg.role}
                 content={msg.content}
-                isStreaming={msg.isStreaming || false}
+                timestamp={msg.timestamp}
                 onOpenCitation={onOpenCitation}
               />
             ))}
             {loading && (
-              <div className="loading-message">
-                <div className="loading-dots">
+              <div className="generating-indicator" aria-live="polite">
+                <span className="generating-dots">
                   <span></span>
                   <span></span>
                   <span></span>
-                </div>
-                <span className="loading-text">{webSearching ? 'Searching the web…' : 'Processing locally...'}</span>
+                </span>
+                <span className="generating-text">
+                  {webSearching ? 'Searching the web…' : 'Generating answer…'}
+                </span>
               </div>
             )}
-            <div ref={messagesEndRef} />
           </>
         )}
       </div>
+
+      {showJump && messages.length > 0 && (
+        <button className="jump-to-latest" onClick={scrollToLatest} aria-label="Jump to latest">
+          <IconArrowDown />
+          <span>Latest</span>
+        </button>
+      )}
 
       <div className="chat-input-area">
         {documents.length > 0 && (
@@ -239,9 +284,16 @@ export function ChatWindow({
             style={{ resize: 'none', maxHeight: '200px', overflowY: 'auto' }}
           />
           {loading ? (
-            <button className="chat-stop-button" onClick={onStop}>
-              Stop
-            </button>
+            <div className="stop-buttons">
+              <button className="chat-stop-button" onClick={() => onStop(false)}>
+                Stop
+              </button>
+              {hasQueue && (
+                <button className="chat-stop-all-button" onClick={() => onStop(true)} title="Stop and clear the queue">
+                  Stop all
+                </button>
+              )}
+            </div>
           ) : (
             <button
               className="chat-submit-button"

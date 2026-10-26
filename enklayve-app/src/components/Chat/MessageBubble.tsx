@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
 import './MessageBubble.css';
 
 const copyIconProps = {
@@ -23,13 +24,47 @@ interface MessageBubbleProps {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  timestamp?: number;
   onOpenCitation?: (fileName: string) => void;
 }
 
 // Matches a bracketed file name the model used as a citation, e.g. [report.pdf].
 const CITATION_RE = /\[([^\]\n]+?\.(?:pdf|docx|txt|md|csv|xlsx|xls|html?|png|jpe?g))\]/gi;
 
-export function MessageBubble({ role, content, isStreaming = false, onOpenCitation }: MessageBubbleProps) {
+// A fenced code block with its own copy button, used by the Markdown renderer.
+function CodeBlock({ children }: { children?: React.ReactNode }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(preRef.current?.innerText ?? '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (error) {
+      console.error('Copy failed:', error);
+    }
+  };
+  return (
+    <div className="code-block">
+      <button className="code-copy-button" onClick={copy} aria-label="Copy code">
+        {copied ? <IconCheck /> : <IconCopy />}
+        <span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+      <pre ref={preRef}>{children}</pre>
+    </div>
+  );
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+export function MessageBubble({ role, content, timestamp, onOpenCitation }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -53,7 +88,11 @@ export function MessageBubble({ role, content, isStreaming = false, onOpenCitati
       <div className="message-bubble-content">
         {role === 'assistant' ? (
           <ReactMarkdown
+            rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
             components={{
+              pre({ children }) {
+                return <CodeBlock>{children}</CodeBlock>;
+              },
               a({ href, children }) {
                 if (href && href.startsWith('ek-cite:')) {
                   const name = decodeURIComponent(href.slice('ek-cite:'.length));
@@ -81,18 +120,20 @@ export function MessageBubble({ role, content, isStreaming = false, onOpenCitati
         ) : (
           <span>{content}</span>
         )}
-        {isStreaming && <span className="cursor-blink">|</span>}
       </div>
-      {!isStreaming && content.trim() && (
-        <button
-          className="message-copy-button"
-          onClick={handleCopy}
-          title={copied ? 'Copied' : 'Copy'}
-          aria-label="Copy message"
-        >
-          {copied ? <IconCheck /> : <IconCopy />}
-          <span>{copied ? 'Copied' : 'Copy'}</span>
-        </button>
+      {content.trim() && (
+        <div className="message-meta">
+          <button
+            className="message-copy-button"
+            onClick={handleCopy}
+            title={copied ? 'Copied' : 'Copy'}
+            aria-label="Copy message"
+          >
+            {copied ? <IconCheck /> : <IconCopy />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+          {timestamp ? <span className="message-time">{formatTime(timestamp)}</span> : null}
+        </div>
       )}
     </div>
   );

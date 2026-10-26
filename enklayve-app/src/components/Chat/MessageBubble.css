@@ -37,7 +37,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   font-size: var(--font-size-md);
-  line-height: 1.6;
+  line-height: 1.65;
   letter-spacing: 0.1px;
   word-wrap: break-word;
   transition: background-color var(--transition-base) var(--easing-ease-in-out);
@@ -55,21 +55,6 @@
   background-color: var(--color-message-assistant-bg);
   color: var(--color-message-assistant-text);
   border-bottom-left-radius: var(--radius-sm);
-}
-
-.cursor-blink {
-  display: inline-block;
-  animation: blink 0.6s step-end infinite;
-  margin-left: 2px;
-}
-
-@keyframes blink {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
 }
 
 /* Markdown formatting styles */
@@ -369,12 +354,22 @@
   opacity: 0.7;
 }
 
-/* "Save to folder" action under an assistant answer */
+/* Copy + timestamp row under a message, revealed on hover */
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 4px;
+}
+
+.message-bubble.user .message-meta {
+  flex-direction: row-reverse;
+}
+
 .message-copy-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
   padding: 3px 8px;
   border: none;
   border-radius: var(--radius-sm);
@@ -393,4 +388,95 @@
 .message-copy-button:hover {
   color: var(--color-text-primary);
   background: var(--color-bg-tertiary);
+}
+
+.message-time {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message-bubble:hover .message-time {
+  opacity: 0.75;
+}
+
+/* Fenced code blocks with a copy button */
+.code-block {
+  position: relative;
+  margin: var(--space-2) 0;
+}
+
+.code-copy-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.code-block:hover .code-copy-button {
+  opacity: 1;
+}
+
+.code-copy-button:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-focus);
+}
+
+/* Syntax highlighting — theme-aware, built from our own tokens so it reads
+   correctly in both light and dark mode. */
+.message-bubble-content .hljs-comment,
+.message-bubble-content .hljs-quote {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+.message-bubble-content .hljs-keyword,
+.message-bubble-content .hljs-selector-tag,
+.message-bubble-content .hljs-built_in,
+.message-bubble-content .hljs-name,
+.message-bubble-content .hljs-tag {
+  color: var(--color-accent-primary);
+}
+.message-bubble-content .hljs-string,
+.message-bubble-content .hljs-attr,
+.message-bubble-content .hljs-regexp,
+.message-bubble-content .hljs-addition {
+  color: var(--color-success);
+}
+.message-bubble-content .hljs-number,
+.message-bubble-content .hljs-literal,
+.message-bubble-content .hljs-type,
+.message-bubble-content .hljs-params {
+  color: var(--color-warning);
+}
+.message-bubble-content .hljs-title,
+.message-bubble-content .hljs-section,
+.message-bubble-content .hljs-attribute,
+.message-bubble-content .hljs-meta {
+  color: var(--color-info);
+}
+.message-bubble-content .hljs-variable,
+.message-bubble-content .hljs-template-variable,
+.message-bubble-content .hljs-symbol {
+  color: var(--color-text-primary);
+}
+.message-bubble-content .hljs-deletion {
+  color: var(--color-danger);
+}
+.message-bubble-content .hljs-emphasis {
+  font-style: italic;
+}
+.message-bubble-content .hljs-strong {
+  font-weight: 700;
 }

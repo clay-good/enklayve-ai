@@ -48,7 +48,7 @@
   --font-size-xs: 12px;              /* Small metadata, captions */
   --font-size-sm: 14px;              /* Secondary text, descriptions */
   --font-size-base: 15px;            /* Base text size */
-  --font-size-md: 16px;              /* Emphasized text */
+  --font-size-md: 17px;              /* Emphasized text, chat messages */
   --font-size-lg: 18px;              /* Section headers */
   --font-size-xl: 20px;              /* Page headers */
   --font-size-2xl: 24px;             /* Large headers */

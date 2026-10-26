@@ -196,9 +196,10 @@ export function ConversationList({
     <div className="conversation-list-container">
       <div className="conversation-list-header">
         <input
+          id="conversation-search"
           type="text"
           className="search-input"
-          placeholder="Search conversations..."
+          placeholder="Search conversations... (⌘K)"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
         />

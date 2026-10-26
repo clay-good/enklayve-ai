@@ -48,7 +48,10 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  timestamp?: number;
 }
+
+const nowSec = () => Math.floor(Date.now() / 1000);
 
 interface OcrProgress {
   stage: string;
@@ -97,20 +100,18 @@ function App() {
   const genConvRef = useRef<number | null>(null);
   const queueRef = useRef<Array<{ convId: number; question: string }>>([]);
   const processingRef = useRef(false);
+  // Holds the answer as it accumulates, so Stop can keep whatever was produced.
+  const accumulatedRef = useRef("");
+  const stopRequestedRef = useRef(false);
   useEffect(() => {
     viewConvRef.current = currentConversationId;
   }, [currentConversationId]);
 
-  // Update the streamed answer only when its owning chat is the one on screen,
-  // and only while its streaming placeholder is still the last message.
-  function applyToActiveView(content: string, streaming: boolean) {
-    if (viewConvRef.current !== genConvRef.current) return;
-    setMessages((prev) => {
-      if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") return prev;
-      const next = [...prev];
-      next[next.length - 1] = { role: "assistant", content, isStreaming: streaming };
-      return next;
-    });
+  // Show a finished answer at once, but only in its own chat if that chat is
+  // the one on screen.
+  function appendAssistantToView(convId: number, content: string) {
+    if (viewConvRef.current !== convId) return;
+    setMessages((prev) => [...prev, { role: "assistant", content, timestamp: nowSec() }]);
   }
 
   useEffect(() => {
@@ -168,6 +169,25 @@ function App() {
   const handleToggleWeb = () => {
     handleSetWeb(webAccess === "enabled" ? "disabled" : "enabled");
   };
+
+  // Keyboard shortcuts: ⌘/Ctrl+N new chat, ⌘/Ctrl+K focus search, Esc stops.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        createNewConversation();
+      } else if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        document.getElementById("conversation-search")?.focus();
+      } else if (e.key === "Escape" && generatingConvId !== null) {
+        e.preventDefault();
+        handleStopGeneration();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [generatingConvId]);
 
   useEffect(() => {
     checkOnboarding();
@@ -371,17 +391,16 @@ function App() {
   // Send a question. One local model answers one thing at a time, but you can
   // line up questions across chats; they run in order and each shows progress in
   // its own chat.
-  async function handleAskQuestion() {
-    if (!question.trim()) return;
-
-    const userQuestion = question;
-    setQuestion("");
+  async function handleAskQuestion(override?: string) {
+    const userQuestion = (override ?? question).trim();
+    if (!userQuestion) return;
+    if (override === undefined) setQuestion("");
 
     const convId = await ensureConversation();
 
     await invoke("add_message", { conversationId: convId, role: "user", content: userQuestion });
     if (viewConvRef.current === convId) {
-      setMessages((prev) => [...prev, { role: "user", content: userQuestion }]);
+      setMessages((prev) => [...prev, { role: "user", content: userQuestion, timestamp: nowSec() }]);
     }
 
     queueRef.current.push({ convId, question: userQuestion });
@@ -405,11 +424,10 @@ function App() {
     setLoading(true);
     setGeneratingConvId(convId);
     genConvRef.current = convId;
+    accumulatedRef.current = "";
 
-    if (viewConvRef.current === convId) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "", isStreaming: true }]);
-    }
-
+    // We buffer the tokens instead of painting them live: the chat shows a
+    // "generating" indicator, then the finished answer appears all at once.
     let accumulatedResponse = "";
     let unlisten: (() => void) | null = null;
     let unlistenComplete: (() => void) | null = null;
@@ -417,11 +435,11 @@ function App() {
     try {
       unlisten = await listen<string>("llm-token", (event) => {
         accumulatedResponse += event.payload;
-        applyToActiveView(accumulatedResponse, true);
+        accumulatedRef.current = accumulatedResponse;
       });
       unlistenComplete = await listen<string>("llm-complete", (event) => {
         accumulatedResponse = event.payload;
-        applyToActiveView(accumulatedResponse, false);
+        accumulatedRef.current = accumulatedResponse;
       });
 
       await invoke<string>("query_documents_streaming", {
@@ -432,11 +450,12 @@ function App() {
 
       if (accumulatedResponse && accumulatedResponse.trim()) {
         await invoke("add_message", { conversationId: convId, role: "assistant", content: accumulatedResponse });
+        appendAssistantToView(convId, accumulatedResponse);
         await maybeGenerateTitle(convId, userQuestion);
       } else {
-        applyToActiveView(
-          "I wasn't able to generate a response. Please try rephrasing your question or check if documents are uploaded.",
-          false
+        appendAssistantToView(
+          convId,
+          "I wasn't able to generate a response. Please try rephrasing your question or check if documents are uploaded."
         );
       }
 
@@ -459,8 +478,17 @@ function App() {
       } else if (errorMessage) {
         errorText += `\n\nDetails: ${errorMessage}`;
       }
-      applyToActiveView(`**${errorCategory}**\n\n${errorText}`, false);
+      // A manual stop isn't an error — keep whatever was produced instead.
+      if (stopRequestedRef.current) {
+        if (accumulatedRef.current.trim()) {
+          await invoke("add_message", { conversationId: convId, role: "assistant", content: accumulatedRef.current }).catch(() => {});
+          appendAssistantToView(convId, accumulatedRef.current);
+        }
+      } else {
+        appendAssistantToView(convId, `**${errorCategory}**\n\n${errorText}`);
+      }
     } finally {
+      stopRequestedRef.current = false;
       setWebSearching(false);
       if (unlisten) unlisten();
       if (unlistenComplete) unlistenComplete();
@@ -485,27 +513,21 @@ function App() {
     }
   }
 
-  async function handleStopGeneration() {
+  // Stop the current answer. With clearQueue, also drop anything lined up behind
+  // it so nothing else starts.
+  async function handleStopGeneration(clearQueue = false) {
+    if (clearQueue) {
+      queueRef.current = [];
+      setQueuedConvIds([]);
+    }
+    stopRequestedRef.current = true;
+    setWebSearching(false);
     try {
       await invoke("stop_generation");
-      // Wait a brief moment for generation to actually stop
-      await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error("Failed to stop generation:", error);
-    } finally {
-      // Always recover the UI, even if the stop call failed.
-      setLoading(false);
-      setWebSearching(false);
-      setGeneratingConvId(null);
-      genConvRef.current = null;
-      setMessages((prev) => {
-        if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") return prev;
-        if (!prev[prev.length - 1].isStreaming) return prev;
-        const next = [...prev];
-        next[next.length - 1] = { ...next[next.length - 1], isStreaming: false };
-        return next;
-      });
     }
+    // runGeneration's own cleanup keeps whatever was produced and resets state.
   }
 
   async function handleFolderUpload() {
@@ -794,7 +816,9 @@ function App() {
           ocrProgress={ocrProgress}
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
+          onStarterPrompt={(text) => handleAskQuestion(text)}
           onStop={handleStopGeneration}
+          hasQueue={queuedConvIds.length > 0}
           onOpenCitation={handleOpenCitation}
           onAttachFile={handleDocumentUpload}
           onAttachFolder={handleFolderUpload}
