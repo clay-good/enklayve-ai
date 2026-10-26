@@ -58,6 +58,8 @@ interface ConversationListProps {
   onConversationArchive: (id: number) => void;
   onConversationUnarchive: (id: number) => void;
   archivedConversations?: ConversationSummary[];
+  generatingConvId?: number | null;
+  queuedConvIds?: number[];
   onNewConversation: () => void;
   isDarkMode: boolean;
   onThemeToggle: () => void;
@@ -79,6 +81,8 @@ export function ConversationList({
   onConversationArchive,
   onConversationUnarchive,
   archivedConversations = [],
+  generatingConvId = null,
+  queuedConvIds = [],
   onNewConversation,
   isDarkMode,
   onThemeToggle,
@@ -304,6 +308,11 @@ export function ConversationList({
                     <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
                   </div>
                 </div>
+                {conv.id === generatingConvId ? (
+                  <span className="chat-status generating" title="Answering…" />
+                ) : queuedConvIds.includes(conv.id) ? (
+                  <span className="chat-status queued" title="Queued" />
+                ) : null}
               </div>
             ))
           )}

@@ -88,29 +88,39 @@ export function ChatWindow({
     }
   }, [question]);
 
-  useEffect(() => {
-    // Only auto-scroll if user is at or near the bottom
-    if (chatMessagesRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = chatMessagesRef.current;
-      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+  // Auto-track the latest message/answer: keep the view pinned to the bottom
+  // while the user is at the bottom, and stop the moment they scroll up.
+  const stickRef = useRef(true);
 
-      if (isNearBottom) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }
+  const handleMessagesScroll = () => {
+    const el = chatMessagesRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
+
+  useEffect(() => {
+    const el = chatMessagesRef.current;
+    if (el && stickRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
+
+  const submit = () => {
+    stickRef.current = true; // sending always jumps to the latest
+    onSubmit();
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Submit on Enter (but allow Shift+Enter for new lines)
     if (e.key === 'Enter' && !e.shiftKey && question.trim()) {
       e.preventDefault(); // Prevent double submission
-      onSubmit();
+      submit();
     }
   };
 
   return (
     <div className="chat-window">
-      <div className="chat-messages" ref={chatMessagesRef}>
+      <div className="chat-messages" ref={chatMessagesRef} onScroll={handleMessagesScroll}>
         {messages.length === 0 ? (
           <div className="empty-state">
             <h2>Welcome to Enklayve</h2>
@@ -235,7 +245,7 @@ export function ChatWindow({
           ) : (
             <button
               className="chat-submit-button"
-              onClick={onSubmit}
+              onClick={submit}
               disabled={!question.trim()}
             >
               Send

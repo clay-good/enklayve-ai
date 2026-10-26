@@ -768,6 +768,8 @@ function App() {
             onConversationArchive={handleConversationArchive}
             onConversationUnarchive={handleConversationUnarchive}
             archivedConversations={archivedConversations}
+            generatingConvId={generatingConvId}
+            queuedConvIds={queuedConvIds}
             onNewConversation={createNewConversation}
             isDarkMode={isDarkMode}
             onThemeToggle={toggleTheme}

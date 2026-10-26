@@ -370,24 +370,27 @@
 }
 
 /* "Save to folder" action under an assistant answer */
-.message-save-button {
-  margin-top: 6px;
-  padding: 3px 10px;
-  border: 1px solid var(--color-border-primary);
+.message-copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: none;
-  color: var(--color-text-secondary);
-  border-radius: 6px;
-  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-.message-bubble:hover .message-save-button {
+.message-bubble:hover .message-copy-button {
   opacity: 1;
 }
 
-.message-save-button:hover {
+.message-copy-button:hover {
   color: var(--color-text-primary);
-  border-color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
 }

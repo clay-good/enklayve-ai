@@ -401,3 +401,30 @@
 .conversation-item.archived {
   opacity: 0.75;
 }
+
+/* Per-chat processing indicator */
+.chat-status {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+
+.chat-status.queued {
+  background: var(--color-text-tertiary);
+}
+
+.chat-status.generating {
+  background: var(--color-accent-primary);
+  animation: chat-pulse 1s ease-in-out infinite;
+}
+
+@keyframes chat-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-status.generating { animation: none; }
+}
