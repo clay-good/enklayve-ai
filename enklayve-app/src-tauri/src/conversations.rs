@@ -358,6 +358,7 @@ pub fn search_conversations(
     conn: &Connection,
     query: &str,
     limit: i32,
+    archived: bool,
 ) -> Result<Vec<ConversationSummary>> {
     let search_pattern = format!("%{}%", query);
 
@@ -367,13 +368,13 @@ pub fn search_conversations(
                 (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
          FROM conversations c
          INNER JOIN messages m ON c.id = m.conversation_id
-         WHERE (c.title LIKE ?1 OR m.content LIKE ?1) AND c.archived = 0
+         WHERE (c.title LIKE ?1 OR m.content LIKE ?1) AND c.archived = ?2
          ORDER BY c.updated_at DESC
-         LIMIT ?2",
+         LIMIT ?3",
     )?;
 
     let conversations = stmt
-        .query_map(rusqlite::params![search_pattern, limit], |row| {
+        .query_map(rusqlite::params![search_pattern, archived as i64, limit], |row| {
             Ok(ConversationSummary {
                 id: row.get(0)?,
                 title: row.get(1)?,

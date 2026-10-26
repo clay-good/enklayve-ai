@@ -78,6 +78,7 @@ function App() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [filteredConversations, setFilteredConversations] = useState<ConversationSummary[]>([]);
   const [archivedConversations, setArchivedConversations] = useState<ConversationSummary[]>([]);
+  const [archivedSearchResults, setArchivedSearchResults] = useState<ConversationSummary[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -348,18 +349,21 @@ function App() {
   async function searchConversations(query: string) {
     if (!query.trim()) {
       setFilteredConversations(conversations);
+      setArchivedSearchResults([]);
       return;
     }
 
     try {
-      const results = await invoke<ConversationSummary[]>("search_conversations", {
-        query: query,
-        limit: 50
-      });
-      setFilteredConversations(results);
+      const [active, archived] = await Promise.all([
+        invoke<ConversationSummary[]>("search_conversations", { query, limit: 50 }),
+        invoke<ConversationSummary[]>("search_archived_conversations", { query, limit: 50 }),
+      ]);
+      setFilteredConversations(active);
+      setArchivedSearchResults(archived);
     } catch (error) {
       console.error("Failed to search conversations:", error);
       setFilteredConversations(conversations);
+      setArchivedSearchResults([]);
     }
   }
 
@@ -852,6 +856,7 @@ function App() {
             onConversationArchive={handleConversationArchive}
             onConversationUnarchive={handleConversationUnarchive}
             archivedConversations={archivedConversations}
+            archivedSearchResults={archivedSearchResults}
             generatingConvId={generatingConvId}
             importingConvId={importConvId}
             queuedConvIds={queuedConvIds}

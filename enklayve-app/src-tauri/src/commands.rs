@@ -1424,7 +1424,21 @@ pub async fn search_conversations(
     let conn = database::get_connection(&app_handle)
         .map_err(|e| e.to_string())?;
 
-    conversations::search_conversations(&conn, &query, limit)
+    conversations::search_conversations(&conn, &query, limit, false)
+        .map_err(|e| e.to_string())
+}
+
+/// Search archived conversations by title and message content.
+#[tauri::command]
+pub async fn search_archived_conversations(
+    app_handle: tauri::AppHandle,
+    query: String,
+    limit: i32,
+) -> Result<Vec<conversations::ConversationSummary>, String> {
+    let conn = database::get_connection(&app_handle)
+        .map_err(|e| e.to_string())?;
+
+    conversations::search_conversations(&conn, &query, limit, true)
         .map_err(|e| e.to_string())
 }
 

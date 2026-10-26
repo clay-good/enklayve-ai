@@ -81,6 +81,7 @@ pub fn run() {
             commands::delete_message,
             commands::update_conversation_title,
             commands::search_conversations,
+            commands::search_archived_conversations,
             commands::export_conversation_markdown,
             commands::export_conversation_json,
             commands::export_conversation_text,

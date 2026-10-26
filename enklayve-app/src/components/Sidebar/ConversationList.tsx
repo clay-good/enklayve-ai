@@ -58,6 +58,7 @@ interface ConversationListProps {
   onConversationArchive: (id: number) => void;
   onConversationUnarchive: (id: number) => void;
   archivedConversations?: ConversationSummary[];
+  archivedSearchResults?: ConversationSummary[];
   generatingConvId?: number | null;
   importingConvId?: number | null;
   queuedConvIds?: number[];
@@ -84,6 +85,7 @@ export function ConversationList({
   onConversationArchive,
   onConversationUnarchive,
   archivedConversations = [],
+  archivedSearchResults = [],
   generatingConvId = null,
   importingConvId = null,
   queuedConvIds = [],
@@ -198,6 +200,54 @@ export function ConversationList({
     }
   };
 
+  const renderConversation = (conv: ConversationSummary, archived: boolean) => (
+    <div
+      key={conv.id}
+      className={`conversation-item ${currentConversationId === conv.id ? 'active' : ''} ${archived ? 'archived' : ''}`}
+      onClick={() => onConversationSelect(conv.id)}
+      onContextMenu={(e) => openMenu(e, conv.id, archived)}
+    >
+      <div className="conversation-content">
+        {editingId === conv.id ? (
+          <input
+            type="text"
+            className="title-edit-input"
+            value={editingTitle}
+            onChange={(e) => setEditingTitle(e.target.value)}
+            onBlur={() => handleTitleSave(conv.id, conv.title)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleTitleSave(conv.id, conv.title);
+              } else if (e.key === 'Escape') {
+                handleTitleCancel();
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <div className="conversation-title">{conv.title}</div>
+        )}
+        <div className="conversation-metadata">
+          <span className="message-count">{conv.message_count} messages</span>
+          <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
+        </div>
+      </div>
+      {conv.id === generatingConvId ? (
+        <span className="chat-status generating" title="Answering…" />
+      ) : conv.id === importingConvId ? (
+        <span className="chat-status generating" title="Indexing…" />
+      ) : queuedConvIds.includes(conv.id) ? (
+        <span className="chat-status queued" title="Queued" />
+      ) : null}
+    </div>
+  );
+
+  const searching = searchQuery.trim().length > 0;
+  const mainList = showArchived
+    ? (searching ? archivedSearchResults : archivedConversations)
+    : conversations;
+
   return (
     <div className="conversation-list-container">
       <div className="conversation-list-header">
@@ -275,7 +325,7 @@ export function ConversationList({
 
       <div className="conversation-list-section">
         <div className="section-header">
-          <h3>{showArchived ? 'Archived' : 'Chats'} ({(showArchived ? archivedConversations : conversations).length})</h3>
+          <h3>{showArchived ? 'Archived' : 'Chats'} ({mainList.length})</h3>
           {!showArchived && (
             <button className="new-conversation-button" onClick={onNewConversation}>
               + New
@@ -284,54 +334,26 @@ export function ConversationList({
         </div>
 
         <div className="conversation-list">
-          {(showArchived ? archivedConversations : conversations).length === 0 ? (
+          {mainList.length === 0 ? (
             <div className="empty-conversations">
-              <p>{showArchived ? 'No archived chats' : 'No chats yet'}</p>
-              {!showArchived && <p className="empty-hint">Start a new chat to begin</p>}
+              <p>
+                {showArchived
+                  ? (searching ? 'No matching archived chats' : 'No archived chats')
+                  : (searching ? 'No matching chats' : 'No chats yet')}
+              </p>
+              {!showArchived && !searching && <p className="empty-hint">Start a new chat to begin</p>}
             </div>
           ) : (
-            (showArchived ? archivedConversations : conversations).map((conv) => (
-              <div
-                key={conv.id}
-                className={`conversation-item ${currentConversationId === conv.id ? 'active' : ''}`}
-                onClick={() => onConversationSelect(conv.id)}
-                onContextMenu={(e) => openMenu(e, conv.id, showArchived)}
-              >
-                <div className="conversation-content">
-                  {editingId === conv.id ? (
-                    <input
-                      type="text"
-                      className="title-edit-input"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onBlur={() => handleTitleSave(conv.id, conv.title)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleTitleSave(conv.id, conv.title);
-                        } else if (e.key === 'Escape') {
-                          handleTitleCancel();
-                        }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      autoFocus
-                    />
-                  ) : (
-                    <div className="conversation-title">{conv.title}</div>
-                  )}
-                  <div className="conversation-metadata">
-                    <span className="message-count">{conv.message_count} messages</span>
-                    <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
-                  </div>
-                </div>
-                {conv.id === generatingConvId ? (
-                  <span className="chat-status generating" title="Answering…" />
-                ) : conv.id === importingConvId ? (
-                  <span className="chat-status generating" title="Indexing…" />
-                ) : queuedConvIds.includes(conv.id) ? (
-                  <span className="chat-status queued" title="Queued" />
-                ) : null}
+            mainList.map((conv) => renderConversation(conv, showArchived))
+          )}
+
+          {!showArchived && searching && archivedSearchResults.length > 0 && (
+            <div className="archived-results">
+              <div className="archived-results-label">
+                Archived results ({archivedSearchResults.length})
               </div>
-            ))
+              {archivedSearchResults.map((conv) => renderConversation(conv, true))}
+            </div>
           )}
         </div>
       </div>
