@@ -432,33 +432,139 @@ fn extract_pdf_tables(path: &Path) -> Result<String> {
     Ok(tables_text)
 }
 
-/// Extract text from DOCX
+/// Extract text from DOCX, with a raw-XML fallback for files docx-rs rejects.
+///
+/// A .docx is a zip; when the typed parser fails or yields nothing, we read
+/// `word/document.xml` directly. This recovers text from valid-but-unusual
+/// documents that broke ingestion before.
 fn extract_docx_text(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)?;
-    let docx = docx_rs::read_docx(&bytes)
-        .map_err(|e| anyhow::anyhow!("Failed to read DOCX: {:?}", e))?;
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("Could not read the file: {}", path.display()))?;
 
-    // Extract text from paragraphs
+    // Primary path: the typed parser preserves structure best.
+    match extract_docx_via_docx_rs(&bytes) {
+        Ok(text) if !text.trim().is_empty() => return Ok(text),
+        Ok(_) => crate::logger::log_warn("DOCX parsed but held no text; trying raw-XML fallback"),
+        Err(e) => crate::logger::log_warn(&format!("docx-rs failed ({}); trying raw-XML fallback", e)),
+    }
+
+    // Fallback path: read word/document.xml out of the zip directly.
+    match extract_docx_via_xml(&bytes) {
+        Ok(text) if !text.trim().is_empty() => {
+            crate::logger::log_info("Recovered DOCX text via raw-XML fallback");
+            Ok(text)
+        }
+        Ok(_) => anyhow::bail!(
+            "This Word document contains no readable text. If it is mostly images or \
+             scanned pages, try exporting it to PDF and uploading that instead."
+        ),
+        Err(e) => anyhow::bail!(
+            "Could not read this Word document. It may be corrupt or password-protected. \
+             (Details: {})",
+            e
+        ),
+    }
+}
+
+/// Primary DOCX extractor using the typed `docx-rs` parser.
+fn extract_docx_via_docx_rs(bytes: &[u8]) -> Result<String> {
+    let docx = docx_rs::read_docx(bytes).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
     let mut text = String::new();
     for child in docx.document.children {
-        match child {
-            docx_rs::DocumentChild::Paragraph(para) => {
-                for para_child in para.children {
-                    if let docx_rs::ParagraphChild::Run(run) = para_child {
-                        for run_child in run.children {
-                            if let docx_rs::RunChild::Text(t) = run_child {
-                                text.push_str(&t.text);
-                            }
+        if let docx_rs::DocumentChild::Paragraph(para) = child {
+            for para_child in para.children {
+                if let docx_rs::ParagraphChild::Run(run) = para_child {
+                    for run_child in run.children {
+                        if let docx_rs::RunChild::Text(t) = run_child {
+                            text.push_str(&t.text);
                         }
                     }
                 }
-                text.push('\n');
             }
-            _ => {}
+            text.push('\n');
         }
     }
-
     Ok(text)
+}
+
+/// Fallback DOCX extractor: unzip and read `word/document.xml`.
+fn extract_docx_via_xml(bytes: &[u8]) -> Result<String> {
+    use std::io::{Cursor, Read};
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .context("not a valid .docx (zip) file")?;
+    let mut xml = String::new();
+    archive
+        .by_name("word/document.xml")
+        .context("missing word/document.xml")?
+        .read_to_string(&mut xml)
+        .context("could not read word/document.xml")?;
+
+    Ok(text_from_document_xml(&xml))
+}
+
+/// Pull readable text out of a WordprocessingML `document.xml`, preserving
+/// paragraph (`w:p`), line-break (`w:br`), and tab (`w:tab`) boundaries.
+fn text_from_document_xml(xml: &str) -> String {
+    // The first alternative is anchored so it matches <w:t> / <w:t ...> but not
+    // <w:tab/>, which must be handled as a tab, not a text run.
+    let re = regex::Regex::new(
+        r"(?s)<w:t(?:\s[^>]*)?>(.*?)</w:t>|<w:tab[^>]*/?>|<w:br[^>]*/?>|</w:p>",
+    )
+    .expect("valid regex");
+
+    let mut out = String::new();
+    for caps in re.captures_iter(xml) {
+        if let Some(t) = caps.get(1) {
+            out.push_str(&unescape_xml(t.as_str()));
+        } else {
+            let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+            if matched.starts_with("<w:tab") {
+                out.push('\t');
+            } else {
+                out.push('\n'); // <w:br/> or </w:p>
+            }
+        }
+    }
+    out
+}
+
+/// Unescape the five predefined XML entities.
+fn unescape_xml(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod docx_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_paragraphs() {
+        let xml = r#"<w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve"> world</w:t></w:r></w:p></w:body>"#;
+        assert_eq!(text_from_document_xml(xml), "Hello\n world\n");
+    }
+
+    #[test]
+    fn unescapes_entities() {
+        let xml = r#"<w:p><w:r><w:t>a &amp; b &lt;tag&gt;</w:t></w:r></w:p>"#;
+        assert_eq!(text_from_document_xml(xml), "a & b <tag>\n");
+    }
+
+    #[test]
+    fn handles_breaks_and_tabs() {
+        let xml = r#"<w:p><w:r><w:t>a</w:t><w:tab/><w:t>b</w:t><w:br/><w:t>c</w:t></w:r></w:p>"#;
+        assert_eq!(text_from_document_xml(xml), "a\tb\nc\n");
+    }
+
+    #[test]
+    fn invalid_zip_is_an_error_not_a_panic() {
+        assert!(extract_docx_via_xml(b"not a zip").is_err());
+    }
 }
 
 /// Extract text from plain text file

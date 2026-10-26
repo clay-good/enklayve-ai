@@ -10,66 +10,6 @@ use crate::conversations;
 use crate::settings;
 use tauri::Emitter;
 
-/// Clean response to ensure natural paragraph formatting without lists
-fn clean_response(response: &str) -> String {
-    let mut cleaned = response.to_string();
-
-    // Remove markdown bold (**text**)
-    cleaned = cleaned.replace("**", "");
-
-    // Remove markdown italic (*text* and _text_)
-    cleaned = regex::Regex::new(r"(^|\s)[\*_]([^\*_]+)[\*_](\s|$)")
-        .unwrap()
-        .replace_all(&cleaned, "$1$2$3")
-        .to_string();
-
-    // Remove bullet points and list markers (•, *, -, numbered lists)
-    // Convert lines starting with list markers into regular paragraphs
-    let lines: Vec<&str> = cleaned.lines().collect();
-    let mut processed_lines = Vec::new();
-
-    for line in lines {
-        let trimmed = line.trim();
-
-        // Skip empty lines - preserve them for paragraph breaks
-        if trimmed.is_empty() {
-            processed_lines.push(String::new());
-            continue;
-        }
-
-        // Remove common list prefixes
-        let cleaned_line = if let Some(rest) = trimmed.strip_prefix("• ") {
-            rest.to_string()
-        } else if let Some(rest) = trimmed.strip_prefix("* ") {
-            rest.to_string()
-        } else if let Some(rest) = trimmed.strip_prefix("- ") {
-            rest.to_string()
-        } else if let Some(rest) = trimmed.strip_prefix("+ ") {
-            rest.to_string()
-        } else {
-            // Check for numbered lists (1. 2. etc.)
-            let numbered_pattern = regex::Regex::new(r"^\d+\.\s+(.+)$").unwrap();
-            if let Some(caps) = numbered_pattern.captures(trimmed) {
-                caps.get(1).unwrap().as_str().to_string()
-            } else {
-                trimmed.to_string()
-            }
-        };
-
-        processed_lines.push(cleaned_line);
-    }
-
-    cleaned = processed_lines.join("\n");
-
-    // Clean up excessive whitespace while preserving paragraph breaks (max 2 newlines)
-    cleaned = regex::Regex::new(r"\n{3,}")
-        .unwrap()
-        .replace_all(&cleaned, "\n\n")
-        .to_string();
-
-    cleaned.trim().to_string()
-}
-
 /// Simple greeting command for testing
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -261,7 +201,7 @@ pub async fn query_documents(
 
     // System prompt - honest about capabilities and knowledge cutoff
     let system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information.",
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. /no_think",
         current_date
     );
 
@@ -321,13 +261,8 @@ pub async fn query_documents(
         let response = model_cache.generate(&prompt, 2048)
             .map_err(|e| format!("Failed to generate response: {}", e))?;
 
-        // Clean response - remove any ChatML markers that leaked through
-        let cleaned_response = response
-            .replace("<|im_end|>", "")
-            .replace("<|im_start|>", "")
-            .replace("<|endoftext|>", "")
-            .trim()
-            .to_string();
+        // Clean response - strip control tokens and <think> blocks, keep Markdown
+        let cleaned_response = crate::response_format::sanitize_final(&response);
 
         // Parse citations from response
         let parsed = crate::citations::parse_citations(&cleaned_response);
@@ -457,7 +392,7 @@ pub async fn query_documents_streaming(
 
     // System prompt - honest about capabilities and knowledge cutoff
     let system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information.",
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. /no_think",
         current_date
     );
 
@@ -508,22 +443,26 @@ pub async fn query_documents_streaming(
 
         // Generate response with buffered streaming
         // 2000 tokens for complete, thorough answers - Qwen can handle it
+        // Sanitize the stream so the live view matches the final answer:
+        // drop <think> reasoning and control tokens, preserve Markdown.
+        let mut sanitizer = crate::response_format::StreamSanitizer::new();
         let response = model_cache.generate_streaming(&prompt, 2000, |token_batch| {
-            // Emit tokens directly during streaming without cleaning
-            window.emit("llm-token", token_batch).ok();
+            let visible = sanitizer.push(token_batch);
+            if !visible.is_empty() {
+                window.emit("llm-token", visible).ok();
+            }
             Ok(())
         })
         .map_err(|e| format!("Failed to generate response: {}", e))?;
 
-        // Clean the final response - remove any ChatML markers that leaked through
-        let cleaned_response = clean_response(&response)
-            .replace("<|im_end|>", "")
-            .replace("<|im_start|>", "")
-            .replace("<|endoftext|>", "")
-            .trim()
-            .to_string();
+        // Flush any text held back at the stream tail.
+        let tail = sanitizer.flush();
+        if !tail.is_empty() {
+            window.emit("llm-token", tail).ok();
+        }
 
-        // Emit completion event with single response (whitespace already preserved)
+        // Final, fully-cleaned answer replaces the streamed text in the UI.
+        let cleaned_response = crate::response_format::sanitize_final(&response);
         window.emit("llm-complete", &cleaned_response).ok();
 
         return Ok(cleaned_response);

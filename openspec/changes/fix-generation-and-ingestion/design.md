@@ -1,28 +1,26 @@
 # Design notes
 
-## Chat template
+## What actually caused the bad formatting
 
-The correctness fix is to stop feeding raw strings to the tokenizer. Each model
-family needs its template. Rather than depend on llama.cpp's built-in template
-handling alone, carry an explicit template in model metadata so behavior is
-predictable and testable across the models we ship.
+ChatML is already applied in `commands.rs`, so the template was not the problem.
+Reading the live path turned up three compounding causes:
 
-Qwen3 (our default family) uses ChatML:
+1. `clean_response` stripped every Markdown affordance (bold, italics, bullet and
+   numbered lists) from the final answer — and that de-Markdowned text was then
+   rendered by `<ReactMarkdown>`, so it came out flat and inconsistent.
+2. Qwen3 is a reasoning model; with thinking on it emits `<think>…</think>`,
+   which was never stripped.
+3. Streaming emitted raw tokens, so the live view (with think blocks and control
+   tokens) never matched the cleaned final answer and visibly snapped on
+   completion.
 
-```
-<|im_start|>system
-{system}<|im_end|>
-<|im_start|>user
-{context}\n\n{user}<|im_end|>
-<|im_start|>assistant
-```
-
-`build_prompt` assembles system + prior turns + retrieved context + current user
-message, then renders the active model's template. Generation must stop on the
-model's end-of-turn id (`<|im_end|>`), and any trailing special tokens are
-stripped before the text reaches the UI. This single change is expected to
-resolve the "weird, non-uniform" formatting, because the model will now be run
-the way it was trained.
+The fix is a `response_format` module that removes `<think>` blocks and control
+tokens while leaving Markdown untouched, applied identically to the stream (a
+stateful `StreamSanitizer`) and the final answer (`sanitize_final`); `/no_think`
+plus a Markdown instruction in the system prompt; and `clean_response` deleted.
+`StreamSanitizer` holds back any suffix that could begin a control token or
+`<think>` tag, and a unit test proves the stream and final agree for arbitrary
+chunk boundaries (including tags split token-by-token).
 
 ## DOCX fallback
 

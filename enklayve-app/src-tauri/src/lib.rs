@@ -4,6 +4,7 @@ mod database;
 mod documents;
 mod models;
 mod inference;
+mod response_format;
 mod downloads;
 mod embeddings;
 mod vector_search;
