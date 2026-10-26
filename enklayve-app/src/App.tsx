@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import { WelcomeFlow } from "./components/Onboarding/WelcomeFlow";
 import { ChatWindow } from "./components/Chat/ChatWindow";
 import { ConversationList } from "./components/Sidebar/ConversationList";
@@ -71,6 +71,7 @@ function App() {
   const [selectedDocument, setSelectedDocument] = useState<DocumentMetadata | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [filteredConversations, setFilteredConversations] = useState<ConversationSummary[]>([]);
+  const [archivedConversations, setArchivedConversations] = useState<ConversationSummary[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -273,8 +274,18 @@ function App() {
       const convs = await invoke<ConversationSummary[]>("list_conversations", { limit: 50 });
       setConversations(convs);
       setFilteredConversations(convs);
+      await loadArchivedConversations();
     } catch (error) {
       console.error("Failed to load conversations:", error);
+    }
+  }
+
+  async function loadArchivedConversations() {
+    try {
+      const archived = await invoke<ConversationSummary[]>("list_archived_conversations");
+      setArchivedConversations(archived);
+    } catch (error) {
+      console.error("Failed to load archived conversations:", error);
     }
   }
 
@@ -584,15 +595,44 @@ function App() {
   }
 
   async function handleConversationDelete(conversationId: number) {
+    const confirmed = await ask("Delete this chat? This can't be undone.", {
+      title: "Delete chat",
+      kind: "warning",
+    });
+    if (!confirmed) return;
     try {
       await invoke("delete_conversation", { conversationId });
       if (currentConversationId === conversationId) {
         setCurrentConversationId(null);
         setMessages([]);
+        setDocuments([]);
       }
       await loadConversations();
     } catch (error) {
       console.error("Failed to delete conversation:", error);
+    }
+  }
+
+  async function handleConversationArchive(conversationId: number) {
+    try {
+      await invoke("set_conversation_archived", { conversationId, archived: true });
+      if (currentConversationId === conversationId) {
+        setCurrentConversationId(null);
+        setMessages([]);
+        setDocuments([]);
+      }
+      await loadConversations();
+    } catch (error) {
+      console.error("Failed to archive conversation:", error);
+    }
+  }
+
+  async function handleConversationUnarchive(conversationId: number) {
+    try {
+      await invoke("set_conversation_archived", { conversationId, archived: false });
+      await loadConversations();
+    } catch (error) {
+      console.error("Failed to unarchive conversation:", error);
     }
   }
 
@@ -740,6 +780,9 @@ function App() {
             onConversationSelect={switchConversation}
             onConversationDelete={handleConversationDelete}
             onConversationTitleUpdate={updateConversationTitle}
+            onConversationArchive={handleConversationArchive}
+            onConversationUnarchive={handleConversationUnarchive}
+            archivedConversations={archivedConversations}
             onNewConversation={createNewConversation}
             isDarkMode={isDarkMode}
             onThemeToggle={toggleTheme}

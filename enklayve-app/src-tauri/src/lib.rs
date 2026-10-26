@@ -109,6 +109,8 @@ pub fn run() {
             commands::check_index_integrity,
             commands::rebuild_index,
             commands::run_startup_recovery,
+            commands::list_archived_conversations,
+            commands::set_conversation_archived,
             commands::get_web_access,
             commands::set_web_access,
             commands::get_working_folder,

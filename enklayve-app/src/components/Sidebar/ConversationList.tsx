@@ -52,6 +52,9 @@ interface ConversationListProps {
   onConversationSelect: (id: number) => void;
   onConversationDelete: (id: number) => void;
   onConversationTitleUpdate: (id: number, title: string) => void;
+  onConversationArchive: (id: number) => void;
+  onConversationUnarchive: (id: number) => void;
+  archivedConversations: ConversationSummary[];
   onNewConversation: () => void;
   isDarkMode: boolean;
   onThemeToggle: () => void;
@@ -70,6 +73,9 @@ export function ConversationList({
   onConversationSelect,
   onConversationDelete,
   onConversationTitleUpdate,
+  onConversationArchive,
+  onConversationUnarchive,
+  archivedConversations,
   onNewConversation,
   isDarkMode,
   onThemeToggle,
@@ -83,8 +89,17 @@ export function ConversationList({
   const [editingTitle, setEditingTitle] = useState('');
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [menu, setMenu] = useState<{ id: number; x: number; y: number; archived: boolean } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const openMenu = (e: React.MouseEvent, id: number, archived: boolean) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ id, x: e.clientX, y: e.clientY, archived });
+  };
 
   const handleTitleEdit = (conv: ConversationSummary) => {
+    setMenu(null);
     setEditingId(conv.id);
     setEditingTitle(conv.title);
   };
@@ -249,6 +264,7 @@ export function ConversationList({
                 key={conv.id}
                 className={`conversation-item ${currentConversationId === conv.id ? 'active' : ''}`}
                 onClick={() => onConversationSelect(conv.id)}
+                onContextMenu={(e) => openMenu(e, conv.id, false)}
               >
                 <div className="conversation-content">
                   {editingId === conv.id ? (
@@ -269,37 +285,98 @@ export function ConversationList({
                       autoFocus
                     />
                   ) : (
-                    <div
-                      className="conversation-title"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleTitleEdit(conv);
-                      }}
-                      title="Click to edit title"
-                    >
-                      {conv.title}
-                    </div>
+                    <div className="conversation-title">{conv.title}</div>
                   )}
                   <div className="conversation-metadata">
                     <span className="message-count">{conv.message_count} messages</span>
                     <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
                   </div>
                 </div>
-                <button
-                  className="delete-button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onConversationDelete(conv.id);
-                  }}
-                  title="Delete conversation"
-                >
-                  ×
-                </button>
               </div>
             ))
           )}
         </div>
       </div>
+
+      {archivedConversations.length > 0 && (
+        <div className="archived-section">
+          <button className="archived-toggle" onClick={() => setShowArchived((v) => !v)}>
+            <svg
+              {...iconProps}
+              width={16}
+              height={16}
+              style={{ transform: showArchived ? 'rotate(90deg)' : 'none', transition: 'transform 150ms' }}
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+            Archived ({archivedConversations.length})
+          </button>
+          {showArchived && (
+            <div className="archived-list">
+              {archivedConversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  className={`conversation-item archived ${currentConversationId === conv.id ? 'active' : ''}`}
+                  onClick={() => onConversationSelect(conv.id)}
+                  onContextMenu={(e) => openMenu(e, conv.id, true)}
+                >
+                  <div className="conversation-content">
+                    <div className="conversation-title">{conv.title}</div>
+                    <div className="conversation-metadata">
+                      <span className="message-count">{conv.message_count} messages</span>
+                      <span className="timestamp">{formatTimestamp(conv.updated_at)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {menu && (
+        <>
+          <div
+            className="menu-backdrop"
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
+          />
+          <div className="context-menu" style={{ top: menu.y, left: menu.x }}>
+            {!menu.archived && (
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  const conv = conversations.find((c) => c.id === menu.id);
+                  if (conv) handleTitleEdit(conv);
+                }}
+              >
+                Rename
+              </button>
+            )}
+            {menu.archived ? (
+              <button
+                className="context-menu-item"
+                onClick={() => { onConversationUnarchive(menu.id); setMenu(null); }}
+              >
+                Unarchive
+              </button>
+            ) : (
+              <button
+                className="context-menu-item"
+                onClick={() => { onConversationArchive(menu.id); setMenu(null); }}
+              >
+                Archive
+              </button>
+            )}
+            <button
+              className="context-menu-item danger"
+              onClick={() => { onConversationDelete(menu.id); setMenu(null); }}
+            >
+              Delete
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

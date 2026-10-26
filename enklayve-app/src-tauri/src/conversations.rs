@@ -45,10 +45,23 @@ pub fn init_conversation_tables(conn: &Connection) -> Result<()> {
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            model_name TEXT
+            model_name TEXT,
+            archived INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
+
+    // Migrate existing tables: add the archived column if it is missing.
+    let conv_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(conversations)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !conv_cols.contains(&"archived".to_string()) {
+        conn.execute(
+            "ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
 
     // Create messages table
     conn.execute(
@@ -204,6 +217,7 @@ pub fn list_conversations(conn: &Connection, limit: Option<i32>) -> Result<Vec<C
                 (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count,
                 (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
          FROM conversations c
+         WHERE c.archived = 0
          ORDER BY c.updated_at DESC
          LIMIT ?1",
     )?;
@@ -222,6 +236,42 @@ pub fn list_conversations(conn: &Connection, limit: Option<i32>) -> Result<Vec<C
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(conversations)
+}
+
+/// List archived conversations (most recently updated first).
+pub fn list_archived_conversations(conn: &Connection) -> Result<Vec<ConversationSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.title, c.created_at, c.updated_at,
+                (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count,
+                (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
+         FROM conversations c
+         WHERE c.archived = 1
+         ORDER BY c.updated_at DESC",
+    )?;
+
+    let conversations = stmt
+        .query_map([], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+                message_count: row.get(4)?,
+                last_message: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(conversations)
+}
+
+/// Archive or unarchive a conversation.
+pub fn set_conversation_archived(conn: &Connection, id: i64, archived: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE conversations SET archived = ?1 WHERE id = ?2",
+        rusqlite::params![if archived { 1 } else { 0 }, id],
+    )?;
+    Ok(())
 }
 
 /// Update conversation title
@@ -317,7 +367,7 @@ pub fn search_conversations(
                 (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
          FROM conversations c
          INNER JOIN messages m ON c.id = m.conversation_id
-         WHERE c.title LIKE ?1 OR m.content LIKE ?1
+         WHERE (c.title LIKE ?1 OR m.content LIKE ?1) AND c.archived = 0
          ORDER BY c.updated_at DESC
          LIMIT ?2",
     )?;

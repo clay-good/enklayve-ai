@@ -1252,6 +1252,27 @@ pub async fn list_conversations(
         .map_err(|e| e.to_string())
 }
 
+/// List archived conversations
+#[tauri::command]
+pub async fn list_archived_conversations(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<conversations::ConversationSummary>, String> {
+    let conn = database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    conversations::list_archived_conversations(&conn).map_err(|e| e.to_string())
+}
+
+/// Archive or unarchive a conversation
+#[tauri::command]
+pub async fn set_conversation_archived(
+    app_handle: tauri::AppHandle,
+    conversation_id: i64,
+    archived: bool,
+) -> Result<(), String> {
+    let conn = database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    conversations::set_conversation_archived(&conn, conversation_id, archived)
+        .map_err(|e| e.to_string())
+}
+
 /// Get a specific conversation
 #[tauri::command]
 pub async fn get_conversation(
