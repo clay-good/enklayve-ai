@@ -134,6 +134,29 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Extract candidate URLs / bare domains from text, each normalized with a
+/// scheme. Lets "fetch github.com/foo" be fetched directly.
+pub fn extract_urls(text: &str) -> Vec<String> {
+    let re = regex::Regex::new(r"(?i)\b((?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s]*)?)")
+        .expect("valid regex");
+    let mut out: Vec<String> = Vec::new();
+    for cap in re.captures_iter(text) {
+        let raw = cap[1].trim_end_matches(|c: char| ".,);:!?'\"".contains(c));
+        if raw.is_empty() {
+            continue;
+        }
+        let url = if raw.to_lowercase().starts_with("http") {
+            raw.to_string()
+        } else {
+            format!("https://{}", raw)
+        };
+        if !out.contains(&url) {
+            out.push(url);
+        }
+    }
+    out
+}
+
 /// Strip HTML tags and unescape the common entities, collapsing whitespace.
 fn strip_html(s: &str) -> String {
     let tag_re = regex::Regex::new(r"(?s)<[^>]+>").expect("valid regex");
@@ -187,6 +210,18 @@ mod tests {
         assert_eq!(results[0].url, "https://example.com/a");
         assert_eq!(results[0].snippet, "A snippet about the first result.");
         assert_eq!(results[1].url, "https://example.org/b");
+    }
+
+    #[test]
+    fn extract_urls_finds_bare_and_full() {
+        let urls = extract_urls("please fetch github.com/clay-good and https://example.org/x.");
+        assert!(urls.contains(&"https://github.com/clay-good".to_string()));
+        assert!(urls.contains(&"https://example.org/x".to_string()));
+    }
+
+    #[test]
+    fn extract_urls_ignores_plain_words() {
+        assert!(extract_urls("summarize the documents please").is_empty());
     }
 
     #[test]

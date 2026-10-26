@@ -92,8 +92,11 @@ function App() {
   // Which conversation (if any) is currently generating, and which one is on
   // screen — so "working" only shows in its own chat, not everywhere.
   const [generatingConvId, setGeneratingConvId] = useState<number | null>(null);
+  const [queuedConvIds, setQueuedConvIds] = useState<number[]>([]);
   const viewConvRef = useRef<number | null>(null);
   const genConvRef = useRef<number | null>(null);
+  const queueRef = useRef<Array<{ convId: number; question: string }>>([]);
+  const processingRef = useRef(false);
   useEffect(() => {
     viewConvRef.current = currentConversationId;
   }, [currentConversationId]);
@@ -365,49 +368,57 @@ function App() {
     }
   }
 
+  // Send a question. One local model answers one thing at a time, but you can
+  // line up questions across chats; they run in order and each shows progress in
+  // its own chat.
   async function handleAskQuestion() {
-    if (!question.trim() || loading) return;
+    if (!question.trim()) return;
 
     const userQuestion = question;
     setQuestion("");
+
+    const convId = await ensureConversation();
+
+    await invoke("add_message", { conversationId: convId, role: "user", content: userQuestion });
+    if (viewConvRef.current === convId) {
+      setMessages((prev) => [...prev, { role: "user", content: userQuestion }]);
+    }
+
+    queueRef.current.push({ convId, question: userQuestion });
+    setQueuedConvIds(queueRef.current.map((q) => q.convId));
+    processQueue();
+  }
+
+  async function processQueue() {
+    if (processingRef.current) return;
+    const next = queueRef.current.shift();
+    setQueuedConvIds(queueRef.current.map((q) => q.convId));
+    if (!next) return;
+
+    processingRef.current = true;
+    await runGeneration(next.convId, next.question);
+    processingRef.current = false;
+    processQueue();
+  }
+
+  async function runGeneration(convId: number, userQuestion: string) {
     setLoading(true);
+    setGeneratingConvId(convId);
+    genConvRef.current = convId;
 
-    const userMessage: Message = { role: "user", content: userQuestion };
-    setMessages((prev) => [...prev, userMessage]);
-
-    const streamingMessage: Message = { role: "assistant", content: "", isStreaming: true };
-    setMessages((prev) => [...prev, streamingMessage]);
+    if (viewConvRef.current === convId) {
+      setMessages((prev) => [...prev, { role: "assistant", content: "", isStreaming: true }]);
+    }
 
     let accumulatedResponse = "";
     let unlisten: (() => void) | null = null;
     let unlistenComplete: (() => void) | null = null;
 
     try {
-      let conversationId = currentConversationId;
-
-      if (!conversationId) {
-        conversationId = await invoke<number>("create_conversation", {
-          title: userQuestion.slice(0, 50),
-        });
-        setCurrentConversationId(conversationId);
-        await loadConversations();
-      }
-
-      await invoke("add_message", {
-        conversationId: conversationId,
-        role: "user",
-        content: userQuestion,
-      });
-
-      genConvRef.current = conversationId;
-      viewConvRef.current = conversationId;
-      setGeneratingConvId(conversationId);
-
       unlisten = await listen<string>("llm-token", (event) => {
         accumulatedResponse += event.payload;
         applyToActiveView(accumulatedResponse, true);
       });
-
       unlistenComplete = await listen<string>("llm-complete", (event) => {
         accumulatedResponse = event.payload;
         applyToActiveView(accumulatedResponse, false);
@@ -416,61 +427,61 @@ function App() {
       await invoke<string>("query_documents_streaming", {
         question: userQuestion,
         modelPath: modelPath,
-        conversationId: conversationId,
+        conversationId: convId,
       });
 
       if (accumulatedResponse && accumulatedResponse.trim()) {
-        await invoke("add_message", {
-          conversationId: conversationId,
-          role: "assistant",
-          content: accumulatedResponse,
-        });
+        await invoke("add_message", { conversationId: convId, role: "assistant", content: accumulatedResponse });
+        await maybeGenerateTitle(convId, userQuestion);
       } else {
-        const emptyMessage = "I wasn't able to generate a response. Please try rephrasing your question or check if documents are uploaded.";
-        applyToActiveView(emptyMessage, false);
+        applyToActiveView(
+          "I wasn't able to generate a response. Please try rephrasing your question or check if documents are uploaded.",
+          false
+        );
       }
 
       await loadConversations();
     } catch (error) {
       console.error("Failed to process question:", error);
-
-      let errorText = "I encountered an error processing your question.";
-      let errorCategory = "Unknown error";
-
       const errorMessage = typeof error === 'string' ? error :
-                          (error && typeof error === 'object' && 'message' in error) ?
-                          (error as Error).message : '';
-
-      // Categorize errors for better user guidance
+        (error && typeof error === 'object' && 'message' in error) ? (error as Error).message : '';
+      let errorCategory = "Error";
+      let errorText = "I encountered an error processing your question.";
       if (errorMessage.includes('model') || errorMessage.includes('load')) {
         errorCategory = "Model Error";
         errorText = "Failed to load the AI model. Please ensure a model is downloaded and try again.";
       } else if (errorMessage.includes('memory') || errorMessage.includes('allocation')) {
         errorCategory = "Memory Error";
         errorText = "Not enough memory to process this request. Try closing other applications or asking a simpler question.";
-      } else if (errorMessage.includes('document') || errorMessage.includes('retrieval')) {
-        errorCategory = "Document Error";
-        errorText = "Failed to retrieve relevant documents. Please check your uploaded documents and try again.";
       } else if (errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
         errorCategory = "Timeout Error";
-        errorText = "The request took too long to process. Try asking a simpler question or check if the model is loaded.";
+        errorText = "The request took too long to process. Try asking a simpler question.";
       } else if (errorMessage) {
         errorText += `\n\nDetails: ${errorMessage}`;
       }
-
       applyToActiveView(`**${errorCategory}**\n\n${errorText}`, false);
-
     } finally {
       setWebSearching(false);
-      if (unlisten) {
-        unlisten();
-      }
-      if (unlistenComplete) {
-        unlistenComplete();
-      }
+      if (unlisten) unlisten();
+      if (unlistenComplete) unlistenComplete();
       setLoading(false);
       setGeneratingConvId(null);
       genConvRef.current = null;
+    }
+  }
+
+  // Give a brand-new chat a short title once it has its first answer.
+  async function maybeGenerateTitle(convId: number, question: string) {
+    const conv = conversations.find((c) => c.id === convId);
+    if (conv && conv.title !== "New Conversation") return; // already has a real title
+    try {
+      const raw = await invoke<string>("generate_chat_title", { question, modelPath });
+      const title = (raw || "").trim().replace(/^["']+|["']+$/g, "").slice(0, 60);
+      if (title) {
+        await invoke("update_conversation_title", { conversationId: convId, title });
+      }
+    } catch (error) {
+      console.error("Failed to generate title:", error);
     }
   }
 
@@ -773,8 +784,9 @@ function App() {
         <ChatWindow
           messages={messages}
           question={question}
-          loading={loading && generatingConvId === currentConversationId}
-          otherBusy={loading && generatingConvId !== currentConversationId}
+          loading={generatingConvId === currentConversationId}
+          busy={loading}
+          queued={currentConversationId != null && queuedConvIds.includes(currentConversationId)}
           documents={documents}
           folderProgress={folderProgress}
           ocrProgress={ocrProgress}

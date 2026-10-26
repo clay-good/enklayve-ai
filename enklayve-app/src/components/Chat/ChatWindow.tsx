@@ -52,7 +52,8 @@ interface ChatWindowProps {
   onAttachFolder?: () => void;
   onRemoveDocument?: (id: number) => void;
   webSearching?: boolean;
-  otherBusy?: boolean;
+  queued?: boolean;
+  busy?: boolean;
 }
 
 export function ChatWindow({
@@ -70,7 +71,8 @@ export function ChatWindow({
   onAttachFolder,
   onRemoveDocument,
   webSearching = false,
-  otherBusy = false,
+  queued = false,
+  busy = false,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
@@ -100,7 +102,7 @@ export function ChatWindow({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Submit on Enter (but allow Shift+Enter for new lines)
-    if (e.key === 'Enter' && !e.shiftKey && !loading && !otherBusy && question.trim()) {
+    if (e.key === 'Enter' && !e.shiftKey && question.trim()) {
       e.preventDefault(); // Prevent double submission
       onSubmit();
     }
@@ -181,8 +183,8 @@ export function ChatWindow({
           </div>
         )}
 
-        {otherBusy && (
-          <div className="composer-progress">Finishing an answer in another chat…</div>
+        {queued && (
+          <div className="composer-progress">Queued — will answer after the current one finishes…</div>
         )}
 
         <div className="composer-row">
@@ -190,7 +192,7 @@ export function ChatWindow({
             <button
               className="attach-button"
               onClick={() => setAttachOpen((v) => !v)}
-              disabled={loading || otherBusy}
+              disabled={loading || busy}
               title="Attach a file or folder to this chat"
               aria-label="Attach"
             >
@@ -234,8 +236,7 @@ export function ChatWindow({
             <button
               className="chat-submit-button"
               onClick={onSubmit}
-              disabled={!question.trim() || otherBusy}
-              title={otherBusy ? 'Finishing an answer in another chat…' : undefined}
+              disabled={!question.trim()}
             >
               Send
             </button>

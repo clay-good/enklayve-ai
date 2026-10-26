@@ -206,6 +206,39 @@ pub fn run_startup_recovery(
     crate::index_health::startup_recovery(&app_handle).map_err(|e| e.to_string())
 }
 
+/// Generate a short (3-6 word) title for a chat from its first question.
+#[tauri::command]
+pub async fn generate_chat_title(
+    question: String,
+    model_path: Option<String>,
+    model_cache: tauri::State<'_, crate::model_cache::ModelCache>,
+) -> Result<String, String> {
+    let model_path = match model_path {
+        Some(p) => p,
+        None => return Ok(String::new()),
+    };
+    model_cache.get_or_load(&model_path).map_err(|e| e.to_string())?;
+
+    let q: String = question.chars().take(400).collect();
+    let prompt = format!(
+        "<|im_start|>system\nYou generate very short, specific chat titles. /no_think<|im_end|>\n<|im_start|>user\nWrite a concise 3 to 6 word title (no quotes, no trailing punctuation) for a chat that begins with this question:\n\n{}<|im_end|>\n<|im_start|>assistant\n",
+        q
+    );
+    let raw = model_cache.generate(&prompt, 24).map_err(|e| e.to_string())?;
+    let cleaned = crate::response_format::sanitize_final(&raw);
+    let title: String = cleaned
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim()
+        .chars()
+        .take(60)
+        .collect();
+    Ok(title)
+}
+
 /// Return the text passages of a document by file name, so the UI can show the
 /// source a citation points to.
 #[tauri::command]
@@ -325,12 +358,25 @@ async fn maybe_web_prompt(
         let _ = w.emit("web-search", serde_json::json!({ "query": question }));
     }
 
-    let results = crate::web::search(question, 4).await.ok()?;
-    if results.is_empty() {
+    let results = crate::web::search(question, 4).await.unwrap_or_default();
+    let direct_urls = crate::web::extract_urls(question);
+    if results.is_empty() && direct_urls.is_empty() {
         return None;
     }
 
     let mut web_block = String::new();
+
+    // Fetch any URL the user named directly ("fetch github.com/foo" should pull
+    // that page, not just search for it).
+    for url in direct_urls.iter().take(2) {
+        if let Ok(page) = crate::web::fetch_readable(url, 3000).await {
+            let page = page.trim();
+            if !page.is_empty() {
+                web_block.push_str(&format!("[{}]({})\nPage content:\n{}\n\n", url, url, page));
+            }
+        }
+    }
+
     for (i, r) in results.iter().enumerate() {
         web_block.push_str(&format!("[{}]({})\n{}\n", r.title, r.url, r.snippet));
         // Pull real content from the top results, not just the snippet, so the
@@ -344,6 +390,10 @@ async fn maybe_web_prompt(
             }
         }
         web_block.push('\n');
+    }
+
+    if web_block.trim().is_empty() {
+        return None;
     }
 
     let system = format!(
