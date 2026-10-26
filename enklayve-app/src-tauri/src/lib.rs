@@ -5,6 +5,7 @@ mod documents;
 mod models;
 mod inference;
 mod response_format;
+mod index_health;
 mod downloads;
 mod embeddings;
 mod vector_search;
@@ -102,6 +103,9 @@ pub fn run() {
             commands::reset_onboarding,
             commands::get_best_model,
             commands::get_document_passages,
+            commands::upload_folder,
+            commands::check_index_integrity,
+            commands::rebuild_index,
             commands::get_hardware_summary,
             commands::preload_model,
             commands::get_preload_status,

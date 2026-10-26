@@ -119,6 +119,82 @@ pub async fn delete_model(app_handle: tauri::AppHandle, model_name: String) -> R
         .map_err(|e| e.to_string())
 }
 
+/// Per-file outcome of a folder import that could not be ingested.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileIngestError {
+    pub file_name: String,
+    pub error: String,
+}
+
+/// Summary of a folder import.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FolderIngestSummary {
+    pub ingested: Vec<String>,
+    pub failed: Vec<FileIngestError>,
+    pub total: usize,
+}
+
+/// Recursively ingest every supported file in a folder. One bad file is
+/// recorded and skipped; it never aborts the batch.
+#[tauri::command]
+pub async fn upload_folder(
+    folder_path: String,
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+) -> Result<FolderIngestSummary, String> {
+    let dir = std::path::Path::new(&folder_path);
+    if !dir.is_dir() {
+        return Err("The selected path is not a folder.".to_string());
+    }
+
+    let files = crate::documents::collect_supported_files(dir);
+    let total = files.len();
+    let mut ingested = Vec::new();
+    let mut failed = Vec::new();
+
+    for (i, path) in files.iter().enumerate() {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let _ = window.emit(
+            "folder-progress",
+            serde_json::json!({ "processed": i, "total": total, "current_file": name }),
+        );
+
+        match crate::documents::upload_document(path.to_string_lossy().to_string(), &app_handle).await {
+            Ok(_) => ingested.push(name),
+            Err(e) => failed.push(FileIngestError { file_name: name, error: e.to_string() }),
+        }
+    }
+
+    let _ = window.emit(
+        "folder-progress",
+        serde_json::json!({ "processed": total, "total": total, "current_file": "" }),
+    );
+
+    Ok(FolderIngestSummary { ingested, failed, total })
+}
+
+/// Check the search index for corruption or drift without changing anything.
+#[tauri::command]
+pub fn check_index_integrity(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::index_health::IndexHealth, String> {
+    crate::index_health::check_integrity(&app_handle).map_err(|e| e.to_string())
+}
+
+/// Repair the search index by dropping orphan chunks and re-embedding from
+/// stored chunk text (no original files required).
+#[tauri::command]
+pub async fn rebuild_index(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::index_health::RebuildResult, String> {
+    crate::index_health::rebuild_index(&app_handle).map_err(|e| e.to_string())
+}
+
 /// Return the text passages of a document by file name, so the UI can show the
 /// source a citation points to.
 #[tauri::command]

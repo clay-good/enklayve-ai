@@ -24,6 +24,9 @@ interface DocumentPanelProps {
   onDocumentSelect: (doc: DocumentMetadata) => void;
   onDocumentDelete: (id: number) => void;
   onUpload: () => void;
+  onUploadFolder: () => void;
+  onRepairIndex: () => void;
+  folderProgress: { processed: number; total: number; current_file: string } | null;
 }
 
 export function DocumentPanel({
@@ -34,6 +37,9 @@ export function DocumentPanel({
   onDocumentSelect,
   onDocumentDelete,
   onUpload,
+  onUploadFolder,
+  onRepairIndex,
+  folderProgress,
 }: DocumentPanelProps) {
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -54,10 +60,33 @@ export function DocumentPanel({
     <div className="document-panel-container">
       <div className="document-panel-header">
         <h3>Documents ({documents.length})</h3>
-        <button className="upload-button" onClick={onUpload}>
-          + New
-        </button>
+        <div className="document-panel-actions">
+          <button className="upload-button" onClick={onUpload} title="Add a single file">
+            + File
+          </button>
+          <button className="upload-button" onClick={onUploadFolder} title="Add every supported file in a folder">
+            + Folder
+          </button>
+          <button className="repair-button" onClick={onRepairIndex} title="Check and repair the search index">
+            Repair
+          </button>
+        </div>
       </div>
+
+      {folderProgress && folderProgress.total > 0 && folderProgress.processed < folderProgress.total && (
+        <div className="folder-progress">
+          <div className="folder-progress-bar">
+            <div
+              className="folder-progress-fill"
+              style={{ width: `${(folderProgress.processed / folderProgress.total) * 100}%` }}
+            ></div>
+          </div>
+          <p className="folder-progress-message">
+            Indexing {folderProgress.processed + 1} of {folderProgress.total}
+            {folderProgress.current_file ? `: ${folderProgress.current_file}` : ''}
+          </p>
+        </div>
+      )}
 
       {ocrProgress && (
         <div className="ocr-progress">

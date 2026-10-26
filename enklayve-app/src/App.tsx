@@ -86,6 +86,7 @@ function App() {
   const [showSecuritySettings, setShowSecuritySettings] = useState(false);
   const [citationDoc, setCitationDoc] = useState<string | null>(null);
   const [citationPassages, setCitationPassages] = useState<string[]>([]);
+  const [folderProgress, setFolderProgress] = useState<{ processed: number; total: number; current_file: string } | null>(null);
 
   useEffect(() => {
     checkOnboarding();
@@ -413,6 +414,89 @@ function App() {
     }
   }
 
+  async function handleFolderUpload() {
+    const selected = await open({ directory: true, multiple: false });
+    if (!selected || typeof selected !== "string") return;
+
+    setLoading(true);
+    let unlisten: (() => void) | null = null;
+    try {
+      unlisten = await listen<{ processed: number; total: number; current_file: string }>(
+        "folder-progress",
+        (event) => setFolderProgress(event.payload)
+      );
+
+      const summary = await invoke<{
+        ingested: string[];
+        failed: { file_name: string; error: string }[];
+        total: number;
+      }>("upload_folder", { folderPath: selected });
+
+      await loadDocuments();
+
+      let msg = `Imported ${summary.ingested.length} of ${summary.total} supported file${summary.total === 1 ? "" : "s"} from the folder.`;
+      if (summary.failed.length > 0) {
+        const sample = summary.failed
+          .slice(0, 5)
+          .map((f) => `- ${f.file_name}: ${f.error}`)
+          .join("\n");
+        const more = summary.failed.length > 5 ? `\n...and ${summary.failed.length - 5} more.` : "";
+        msg += `\n\n${summary.failed.length} file(s) could not be imported:\n${sample}${more}`;
+      }
+      setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Folder import failed.\n\n${String(error)}` },
+      ]);
+    } finally {
+      if (unlisten) unlisten();
+      setFolderProgress(null);
+      setLoading(false);
+    }
+  }
+
+  async function handleRepairIndex() {
+    setLoading(true);
+    try {
+      const health = await invoke<{
+        documents: number;
+        chunks: number;
+        invalid_embeddings: number;
+        orphan_chunks: number;
+        documents_without_chunks: number;
+        healthy: boolean;
+      }>("check_index_integrity");
+
+      if (health.healthy) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Your search index is healthy: ${health.documents} document(s), ${health.chunks} chunk(s).`,
+          },
+        ]);
+      } else {
+        const result = await invoke<{ reembedded: number; orphans_removed: number }>("rebuild_index");
+        await loadDocuments();
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Repaired the search index: re-embedded ${result.reembedded} chunk(s) and removed ${result.orphans_removed} orphaned chunk(s).`,
+          },
+        ]);
+      }
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Index check failed.\n\n${String(error)}` },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDocumentUpload() {
     const selected = await open({
       multiple: false,
@@ -589,6 +673,9 @@ function App() {
             onDocumentSelect={setSelectedDocument}
             onDocumentDelete={handleDocumentDelete}
             onUpload={handleDocumentUpload}
+            onUploadFolder={handleFolderUpload}
+            onRepairIndex={handleRepairIndex}
+            folderProgress={folderProgress}
           />
         </div>
       </aside>

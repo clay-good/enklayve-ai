@@ -539,6 +539,51 @@ fn unescape_xml(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// File extensions Enklayve can ingest (lowercase, without the dot).
+pub const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "pdf", "docx", "txt", "md", "csv", "xlsx", "xls", "html", "htm", "mhtml", "mht",
+    "jpg", "jpeg", "png",
+];
+
+/// Is this file extension one we can ingest?
+pub fn is_supported_extension(ext: &str) -> bool {
+    SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+}
+
+/// Recursively collect ingestible files under `dir`, skipping hidden entries and
+/// common junk directories. Returns a sorted list for stable ordering.
+pub fn collect_supported_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![dir.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+
+            if name.starts_with('.') {
+                continue; // hidden files/dirs
+            }
+
+            if path.is_dir() {
+                if matches!(name.as_ref(), "node_modules" | "target" | "venv" | "__pycache__") {
+                    continue;
+                }
+                stack.push(path);
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if is_supported_extension(ext) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+
+    out.sort();
+    out
+}
+
 #[cfg(test)]
 mod docx_tests {
     use super::*;
@@ -564,6 +609,49 @@ mod docx_tests {
     #[test]
     fn invalid_zip_is_an_error_not_a_panic() {
         assert!(extract_docx_via_xml(b"not a zip").is_err());
+    }
+
+    #[test]
+    fn supported_extension_is_case_insensitive() {
+        assert!(is_supported_extension("PDF"));
+        assert!(is_supported_extension("docx"));
+        assert!(!is_supported_extension("exe"));
+    }
+
+    #[test]
+    fn collect_skips_unsupported_hidden_and_junk() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!(
+            "enklayve_collect_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(base.join("node_modules")).unwrap();
+        fs::create_dir_all(base.join("sub")).unwrap();
+        fs::write(base.join("a.txt"), b"hi").unwrap();
+        fs::write(base.join("b.pdf"), b"%PDF").unwrap();
+        fs::write(base.join("c.xyz"), b"x").unwrap(); // unsupported
+        fs::write(base.join(".secret.txt"), b"x").unwrap(); // hidden
+        fs::write(base.join("sub").join("d.md"), b"x").unwrap();
+        fs::write(base.join("node_modules").join("e.txt"), b"x").unwrap(); // junk dir
+
+        let found = collect_supported_files(&base);
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"a.txt".to_string()));
+        assert!(names.contains(&"b.pdf".to_string()));
+        assert!(names.contains(&"d.md".to_string()));
+        assert!(!names.iter().any(|n| n == "c.xyz"));
+        assert!(!names.iter().any(|n| n == ".secret.txt"));
+        assert!(!names.iter().any(|n| n == "e.txt"));
+        assert_eq!(found.len(), 3);
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
 
