@@ -10,6 +10,11 @@ use crate::conversations;
 use crate::settings;
 use tauri::Emitter;
 
+/// Minimum top cosine similarity for the user's documents to be considered
+/// relevant to a question. Below this we answer from general knowledge and say
+/// so, rather than citing weak, likely-irrelevant chunks. Tunable with real data.
+const RELEVANCE_THRESHOLD: f32 = 0.35;
+
 /// Simple greeting command for testing
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -114,6 +119,33 @@ pub async fn delete_model(app_handle: tauri::AppHandle, model_name: String) -> R
         .map_err(|e| e.to_string())
 }
 
+/// Return the text passages of a document by file name, so the UI can show the
+/// source a citation points to.
+#[tauri::command]
+pub async fn get_document_passages(
+    file_name: String,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let document_id = {
+        let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+        match conn.query_row(
+            "SELECT id FROM documents WHERE file_name = ?1 ORDER BY upload_date DESC LIMIT 1",
+            rusqlite::params![file_name],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(Vec::new()),
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+
+    let chunks = crate::vector_search::get_document_chunks(document_id, &app_handle)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(chunks.into_iter().map(|c| c.chunk_text).collect())
+}
+
 /// Always retrieve documents if they exist - let the model decide relevance
 /// No hardcoded patterns or guessing about user intent
 fn should_retrieve_documents(_query: &str, has_documents: bool) -> bool {
@@ -158,8 +190,25 @@ pub async fn query_documents(
 
     // Use hybrid search results directly - no reranking, no filtering
     // Let the model see all relevant context and decide what's useful
-    let max_chunks = 8;  // Generous limit for thorough answers
-    let filtered_chunks: Vec<_> = search_results.iter().take(max_chunks).collect();
+    // Relevance gate: only treat documents as relevant when the best semantic
+    // match clears a threshold. Otherwise answer honestly from general knowledge
+    // instead of forcing weak, misleading context into the prompt.
+    let docs_relevant = if should_retrieve && !search_results.is_empty() {
+        crate::vector_search::top_semantic_similarity(&question, &app_handle)
+            .await
+            .unwrap_or(0.0)
+            >= RELEVANCE_THRESHOLD
+    } else {
+        false
+    };
+    let not_in_docs = has_documents && !docs_relevant;
+
+    let max_chunks = 8; // Generous limit for thorough answers
+    let filtered_chunks: Vec<_> = if docs_relevant {
+        search_results.iter().take(max_chunks).collect()
+    } else {
+        Vec::new()
+    };
 
     crate::logger::log_info(&format!(
         "Using {} chunks for context",
@@ -201,10 +250,16 @@ pub async fn query_documents(
     let current_datetime = now.format("%B %d, %Y at %I:%M %p").to_string();
 
     // System prompt - honest about capabilities and knowledge cutoff
-    let system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. /no_think",
+    let mut system_base = format!(
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code.",
         current_date
     );
+    if not_in_docs {
+        system_base.push_str(
+            " The user has documents loaded, but none are relevant to this question. Answer from your general knowledge and begin by telling them you did not find this in their documents.",
+        );
+    }
+    system_base.push_str(" /no_think");
 
     // Create prompt using ChatML format - clean and natural
     let prompt = if context_chunks.is_empty() {
@@ -228,7 +283,7 @@ pub async fn query_documents(
         }
 
         let system_with_docs = format!(
-            "{} You have access to the user's documents below. Use them to provide accurate, thorough answers.",
+            "{} You have access to the user's documents below. Use them to provide accurate, thorough answers. Cite your sources inline using the bracketed file name shown before each document, for example [report.pdf].",
             system_base
         );
 
@@ -350,8 +405,25 @@ pub async fn query_documents_streaming(
 
     // Use hybrid search results directly - no reranking, no filtering
     // Let the model see all relevant context and decide what's useful
-    let max_chunks = 8;  // Generous limit for thorough answers
-    let filtered_chunks: Vec<_> = search_results.iter().take(max_chunks).collect();
+    // Relevance gate: only treat documents as relevant when the best semantic
+    // match clears a threshold. Otherwise answer honestly from general knowledge
+    // instead of forcing weak, misleading context into the prompt.
+    let docs_relevant = if should_retrieve && !search_results.is_empty() {
+        crate::vector_search::top_semantic_similarity(&question, &app_handle)
+            .await
+            .unwrap_or(0.0)
+            >= RELEVANCE_THRESHOLD
+    } else {
+        false
+    };
+    let not_in_docs = has_documents && !docs_relevant;
+
+    let max_chunks = 8; // Generous limit for thorough answers
+    let filtered_chunks: Vec<_> = if docs_relevant {
+        search_results.iter().take(max_chunks).collect()
+    } else {
+        Vec::new()
+    };
 
     crate::logger::log_info(&format!(
         "Using {} chunks for context",
@@ -392,10 +464,16 @@ pub async fn query_documents_streaming(
     let current_date = now.format("%B %d, %Y").to_string();
 
     // System prompt - honest about capabilities and knowledge cutoff
-    let system_base = format!(
-        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code. /no_think",
+    let mut system_base = format!(
+        "You are a helpful, knowledgeable AI assistant. Today is {}. Your knowledge was last updated in early 2024, so for questions about recent events, let the user know you may not have the latest information. Format your answers in clean, readable Markdown: short paragraphs, bulleted or numbered lists where they help, and fenced code blocks only for code.",
         current_date
     );
+    if not_in_docs {
+        system_base.push_str(
+            " The user has documents loaded, but none are relevant to this question. Answer from your general knowledge and begin by telling them you did not find this in their documents.",
+        );
+    }
+    system_base.push_str(" /no_think");
 
     // Create prompt using ChatML format - clean and natural
     let prompt = if context_chunks.is_empty() {
@@ -419,7 +497,7 @@ pub async fn query_documents_streaming(
         }
 
         let system_with_docs = format!(
-            "{} You have access to the user's documents below. Use them to provide accurate, thorough answers.",
+            "{} You have access to the user's documents below. Use them to provide accurate, thorough answers. Cite your sources inline using the bracketed file name shown before each document, for example [report.pdf].",
             system_base
         );
 

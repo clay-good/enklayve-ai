@@ -101,6 +101,7 @@ pub fn run() {
             commands::mark_model_downloaded,
             commands::reset_onboarding,
             commands::get_best_model,
+            commands::get_document_passages,
             commands::get_hardware_summary,
             commands::preload_model,
             commands::get_preload_status,

@@ -76,6 +76,14 @@ pub async fn search_similar_chunks(
 }
 
 /// Get chunks from a specific document
+/// Best cosine similarity between the query and any indexed chunk (0.0 if none).
+/// Used as a relevance gate to decide whether the documents actually cover a
+/// question before feeding their chunks to the model.
+pub async fn top_semantic_similarity(query: &str, app_handle: &AppHandle) -> Result<f32> {
+    let results = search_similar_chunks(query, app_handle, 1).await?;
+    Ok(results.first().map(|r| r.similarity).unwrap_or(0.0))
+}
+
 pub async fn get_document_chunks(
     document_id: i64,
     app_handle: &AppHandle,

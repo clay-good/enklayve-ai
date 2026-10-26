@@ -84,6 +84,8 @@ function App() {
   const [isLocked, setIsLocked] = useState(false);
   const [securityEnabled, setSecurityEnabled] = useState(false);
   const [showSecuritySettings, setShowSecuritySettings] = useState(false);
+  const [citationDoc, setCitationDoc] = useState<string | null>(null);
+  const [citationPassages, setCitationPassages] = useState<string[]>([]);
 
   useEffect(() => {
     checkOnboarding();
@@ -501,6 +503,18 @@ function App() {
     return <UnlockScreen onUnlock={handleUnlock} />;
   }
 
+  const handleOpenCitation = async (fileName: string) => {
+    try {
+      const passages = await invoke<string[]>("get_document_passages", { fileName });
+      setCitationDoc(fileName);
+      setCitationPassages(passages);
+    } catch (error) {
+      console.error("Failed to load citation passages:", error);
+      setCitationDoc(fileName);
+      setCitationPassages([]);
+    }
+  };
+
   const handleBackupComplete = (success: boolean, message: string) => {
     if (success && message.includes('restored')) {
       loadDocuments();
@@ -512,6 +526,36 @@ function App() {
     <div className="app">
       {showSecuritySettings && (
         <SecuritySettings onClose={handleSecuritySettingsClose} />
+      )}
+
+      {citationDoc && (
+        <div className="citation-modal-overlay" onClick={() => setCitationDoc(null)}>
+          <div className="citation-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="citation-modal-header">
+              <h3>{citationDoc}</h3>
+              <button
+                className="citation-modal-close"
+                aria-label="Close"
+                onClick={() => setCitationDoc(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="citation-modal-body">
+              {citationPassages.length === 0 ? (
+                <p className="citation-empty">
+                  No passages found for this document. It may have been removed.
+                </p>
+              ) : (
+                citationPassages.map((passage, i) => (
+                  <p key={i} className="citation-passage">
+                    {passage}
+                  </p>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <aside className="sidebar">
@@ -557,6 +601,7 @@ function App() {
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
           onStop={handleStopGeneration}
+          onOpenCitation={handleOpenCitation}
         />
       </main>
     </div>

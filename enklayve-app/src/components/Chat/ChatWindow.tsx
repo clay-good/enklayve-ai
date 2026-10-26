@@ -15,6 +15,7 @@ interface ChatWindowProps {
   onQuestionChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
+  onOpenCitation?: (fileName: string) => void;
 }
 
 export function ChatWindow({
@@ -24,6 +25,7 @@ export function ChatWindow({
   onQuestionChange,
   onSubmit,
   onStop,
+  onOpenCitation,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
@@ -71,6 +73,7 @@ export function ChatWindow({
                 role={msg.role}
                 content={msg.content}
                 isStreaming={msg.isStreaming || false}
+                onOpenCitation={onOpenCitation}
               />
             ))}
             {loading && (
