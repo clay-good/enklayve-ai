@@ -25,7 +25,6 @@ interface DocumentPanelProps {
   onDocumentDelete: (id: number) => void;
   onUpload: () => void;
   onUploadFolder: () => void;
-  onRepairIndex: () => void;
   folderProgress: { processed: number; total: number; current_file: string } | null;
   webAccess: string;
   onToggleWeb: () => void;
@@ -40,7 +39,6 @@ export function DocumentPanel({
   onDocumentDelete,
   onUpload,
   onUploadFolder,
-  onRepairIndex,
   folderProgress,
   webAccess,
   onToggleWeb,
@@ -71,11 +69,8 @@ export function DocumentPanel({
           <button className="upload-button" onClick={onUploadFolder} title="Add every supported file in a folder">
             + Folder
           </button>
-          <button className="repair-button" onClick={onRepairIndex} title="Check and repair the search index">
-            Repair
-          </button>
           <button
-            className="repair-button"
+            className="web-toggle-button"
             onClick={onToggleWeb}
             title={webAccess === 'enabled'
               ? 'Web search is on — click to turn off'

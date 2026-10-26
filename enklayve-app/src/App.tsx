@@ -92,17 +92,33 @@ function App() {
 
   useEffect(() => {
     invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
-    // Crash recovery: WAL auto-recovers interrupted commits on open; this runs a
-    // consistency pass and only speaks up if the database is actually damaged.
-    invoke<{ integrity_ok: boolean; orphan_chunks_removed: number }>("run_startup_recovery")
+    // Auto-repair on launch: WAL recovers interrupted commits on open, then we
+    // quietly drop orphan chunks and re-embed any corrupt embeddings. It only
+    // speaks up if it actually had to fix something.
+    invoke<{
+      integrity_ok: boolean;
+      orphan_chunks_removed: number;
+      embeddings_repaired: number;
+    }>("run_startup_recovery")
       .then((r) => {
-        if (r && !r.integrity_ok) {
+        if (!r) return;
+        const fixed = r.orphan_chunks_removed + r.embeddings_repaired;
+        if (fixed > 0) {
+          loadDocuments();
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: `Tidied up the search index on startup (repaired ${fixed} item${fixed === 1 ? "" : "s"}).`,
+            },
+          ]);
+        } else if (!r.integrity_ok) {
           setMessages((prev) => [
             ...prev,
             {
               role: "assistant",
               content:
-                "I found a problem with the local database on startup. Use **Repair** in the Documents panel to rebuild the search index.",
+                "The local database reported an integrity problem on startup. Your documents are safe; re-importing any affected files will rebuild their index.",
             },
           ]);
         }
@@ -499,47 +515,6 @@ function App() {
     }
   }
 
-  async function handleRepairIndex() {
-    setLoading(true);
-    try {
-      const health = await invoke<{
-        documents: number;
-        chunks: number;
-        invalid_embeddings: number;
-        orphan_chunks: number;
-        documents_without_chunks: number;
-        healthy: boolean;
-      }>("check_index_integrity");
-
-      if (health.healthy) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Your search index is healthy: ${health.documents} document(s), ${health.chunks} chunk(s).`,
-          },
-        ]);
-      } else {
-        const result = await invoke<{ reembedded: number; orphans_removed: number }>("rebuild_index");
-        await loadDocuments();
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Repaired the search index: re-embedded ${result.reembedded} chunk(s) and removed ${result.orphans_removed} orphaned chunk(s).`,
-          },
-        ]);
-      }
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Index check failed.\n\n${String(error)}` },
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleDocumentUpload() {
     const selected = await open({
       multiple: false,
@@ -697,7 +672,7 @@ function App() {
                 <button className="upload-button" onClick={() => handleSetWeb("enabled")}>
                   Enable web search
                 </button>
-                <button className="repair-button" onClick={() => handleSetWeb("disabled")}>
+                <button className="web-toggle-button" onClick={() => handleSetWeb("disabled")}>
                   Keep it offline
                 </button>
               </div>
@@ -768,7 +743,6 @@ function App() {
             onDocumentDelete={handleDocumentDelete}
             onUpload={handleDocumentUpload}
             onUploadFolder={handleFolderUpload}
-            onRepairIndex={handleRepairIndex}
             folderProgress={folderProgress}
             webAccess={webAccess}
             onToggleWeb={handleToggleWeb}

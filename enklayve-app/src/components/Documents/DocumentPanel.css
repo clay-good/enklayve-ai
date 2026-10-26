@@ -260,7 +260,7 @@
   }
 }
 
-/* Header actions: file / folder / repair */
+/* Header actions: file / folder / web toggle */
 .document-panel-actions {
   display: flex;
   gap: 6px;
@@ -268,43 +268,43 @@
   flex-wrap: wrap;
 }
 
-.repair-button {
+.web-toggle-button {
   background: none;
-  border: 1px solid var(--color-border, #333);
-  color: var(--color-text-secondary, #9ca3af);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-secondary);
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 0.8rem;
   cursor: pointer;
 }
 
-.repair-button:hover {
-  color: var(--color-text, #e5e5e5);
-  border-color: var(--color-text-secondary, #9ca3af);
+.web-toggle-button:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
 }
 
 /* Folder import progress */
 .folder-progress {
-  padding: 8px var(--space-4, 16px);
+  padding: 8px var(--space-4);
 }
 
 .folder-progress-bar {
   height: 4px;
-  background: var(--color-border, #333);
+  background: var(--color-border-primary);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .folder-progress-fill {
   height: 100%;
-  background: var(--color-accent, #3b82f6);
+  background: var(--color-accent-primary);
   transition: width 0.2s ease;
 }
 
 .folder-progress-message {
   margin: 6px 0 0;
   font-size: 0.78rem;
-  color: var(--color-text-secondary, #9ca3af);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

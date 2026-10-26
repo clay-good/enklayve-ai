@@ -252,7 +252,7 @@
   border: none;
   background: none;
   font: inherit;
-  color: var(--color-accent, #3b82f6);
+  color: var(--color-accent-primary);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -275,9 +275,9 @@
 }
 
 .citation-modal {
-  background: var(--color-surface, #1e1e1e);
-  color: var(--color-text, #e5e5e5);
-  border: 1px solid var(--color-border, #333);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 12px;
   width: min(640px, 100%);
   max-height: 80vh;
@@ -291,7 +291,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--color-border, #333);
+  border-bottom: 1px solid var(--color-border-primary);
 }
 
 .citation-modal-header h3 {
@@ -318,7 +318,7 @@
 .citation-passage {
   margin: 0 0 14px;
   padding-left: 12px;
-  border-left: 3px solid var(--color-accent, #3b82f6);
+  border-left: 3px solid var(--color-accent-primary);
   white-space: pre-wrap;
   line-height: 1.5;
 }
@@ -331,9 +331,9 @@
 .message-save-button {
   margin-top: 6px;
   padding: 3px 10px;
-  border: 1px solid var(--color-border, #333);
+  border: 1px solid var(--color-border-primary);
   background: none;
-  color: var(--color-text-secondary, #9ca3af);
+  color: var(--color-text-secondary);
   border-radius: 6px;
   font-size: 0.75rem;
   cursor: pointer;
@@ -346,6 +346,6 @@
 }
 
 .message-save-button:hover {
-  color: var(--color-text, #e5e5e5);
-  border-color: var(--color-text-secondary, #9ca3af);
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
 }

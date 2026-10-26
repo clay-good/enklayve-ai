@@ -109,6 +109,7 @@ pub struct RecoveryReport {
     pub integrity_ok: bool,
     pub integrity_detail: String,
     pub orphan_chunks_removed: i64,
+    pub embeddings_repaired: i64,
 }
 
 /// Consistency pass on an open connection: a SQLite integrity check plus removal
@@ -128,14 +129,58 @@ pub fn recover_connection(conn: &Connection) -> Result<RecoveryReport> {
         integrity_ok,
         integrity_detail,
         orphan_chunks_removed,
+        embeddings_repaired: 0,
     })
 }
 
-/// Startup recovery: opening the database lets SQLite's WAL auto-recover any
-/// commit interrupted by a crash; then we run a consistency pass on top.
+/// Re-embed only the chunks whose stored embedding fails to decode. Cheap when
+/// nothing is wrong (no embedding model is loaded unless there is work to do).
+fn repair_invalid_embeddings(conn: &Connection) -> Result<i64> {
+    let broken: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare("SELECT id, chunk_text, embedding FROM chunks")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut broken = Vec::new();
+        for row in rows {
+            let (id, text, bytes) = row?;
+            if crate::embeddings::Embedding::from_bytes(&bytes).is_err() {
+                broken.push((id, text));
+            }
+        }
+        broken
+    };
+
+    if broken.is_empty() {
+        return Ok(0);
+    }
+
+    let generator = crate::embeddings::EmbeddingGenerator::new()?;
+    let mut repaired = 0i64;
+    for (id, text) in broken {
+        let embedding = generator.generate_embedding(&text)?;
+        conn.execute(
+            "UPDATE chunks SET embedding = ?1 WHERE id = ?2",
+            rusqlite::params![embedding.to_bytes(), id],
+        )?;
+        repaired += 1;
+    }
+    Ok(repaired)
+}
+
+/// Startup auto-repair: opening the database lets SQLite's WAL auto-recover any
+/// commit interrupted by a crash; then we run a consistency pass and quietly fix
+/// what we can — drop orphan chunks and re-embed any corrupt embeddings. This
+/// runs automatically on every launch, so there is no manual "repair" step.
 pub fn startup_recovery(app_handle: &AppHandle) -> Result<RecoveryReport> {
     let conn = crate::database::get_connection(app_handle)?;
-    recover_connection(&conn)
+    let mut report = recover_connection(&conn)?;
+    report.embeddings_repaired = repair_invalid_embeddings(&conn)?;
+    Ok(report)
 }
 
 #[cfg(test)]
