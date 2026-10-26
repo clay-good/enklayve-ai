@@ -19,8 +19,8 @@ pub async fn search_similar_chunks(
     top_k: usize,
     conversation_id: i64,
 ) -> Result<Vec<SearchResult>> {
-    // Generate embedding for the query
-    let generator = EmbeddingGenerator::new()?;
+    // Generate embedding for the query (shared, cached model)
+    let generator = EmbeddingGenerator::shared()?;
     let query_embedding = generator.generate_embedding(query)?;
 
     // Get database connection

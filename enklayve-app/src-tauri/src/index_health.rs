@@ -87,7 +87,7 @@ pub fn rebuild_index(app_handle: &AppHandle) -> Result<RebuildResult> {
         mapped.collect::<std::result::Result<Vec<_>, _>>()?
     };
 
-    let generator = crate::embeddings::EmbeddingGenerator::new()?;
+    let generator = crate::embeddings::EmbeddingGenerator::shared()?;
     let mut reembedded = 0i64;
     for (id, text) in rows {
         let embedding = generator.generate_embedding(&text)?;
@@ -159,7 +159,7 @@ fn repair_invalid_embeddings(conn: &Connection) -> Result<i64> {
         return Ok(0);
     }
 
-    let generator = crate::embeddings::EmbeddingGenerator::new()?;
+    let generator = crate::embeddings::EmbeddingGenerator::shared()?;
     let mut repaired = 0i64;
     for (id, text) in broken {
         let embedding = generator.generate_embedding(&text)?;

@@ -56,6 +56,20 @@ pub struct EmbeddingGenerator {
 }
 
 impl EmbeddingGenerator {
+    /// A process-wide shared embedder. The BGE ONNX model is loaded from disk
+    /// only once and reused, instead of being reloaded on every search/upload
+    /// (which previously happened twice per query).
+    pub fn shared() -> Result<&'static EmbeddingGenerator> {
+        use std::sync::OnceLock;
+        static SHARED: OnceLock<EmbeddingGenerator> = OnceLock::new();
+        if let Some(g) = SHARED.get() {
+            return Ok(g);
+        }
+        let g = Self::new()?;
+        let _ = SHARED.set(g);
+        Ok(SHARED.get().expect("embedder just initialized"))
+    }
+
     /// Create a new embedding generator with the default model
     /// Uses BGE-small-en-v1.5 (33MB, 384 dimensions) - excellent quality and fast
     pub fn new() -> Result<Self> {

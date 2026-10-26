@@ -135,7 +135,7 @@ pub async fn upload_document(file_path: String, conversation_id: i64, app_handle
 
     // Generate embeddings BEFORE database transaction to avoid holding transaction during slow operation
     crate::logger::log_info(&format!("Generating embeddings for {} chunks using parallel processing...", chunks.len()));
-    let embedding_generator = crate::embeddings::EmbeddingGenerator::new()?;
+    let embedding_generator = crate::embeddings::EmbeddingGenerator::shared()?;
 
     // Generate all embeddings in parallel batches
     let embeddings = if chunks.len() > 100 {
