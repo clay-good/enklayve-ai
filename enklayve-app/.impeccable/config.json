@@ -10,7 +10,7 @@
           "src/App.css"
         ],
         "createdAt": "2026-10-26T02:19:57.915Z",
-        "reason": "false positive: .loading-content .spinner is a standard border-based CSS spinner (border + border-top accent + border-radius:50% + spin animation), not a decorative accent border on a card. decided: assistant triage, evidence src/App.css:32-40"
+        "reason": "loading spinner: accent top-border on a 50% circle is the standard CSS spinner arc, not a bordered card"
       }
     ]
   }
