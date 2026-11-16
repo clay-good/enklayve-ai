@@ -45,18 +45,35 @@ jobs:
       - name: Install frontend dependencies
         run: cd enklayve-app && npm install
 
+      # Pass Apple signing/notarization secrets to the build only when they are
+      # actually set. An empty APPLE_CERTIFICATE still counts as "provided" to
+      # the Tauri bundler, which then fails trying to import it; leaving it
+      # unset gives the documented ad-hoc ('-') signing instead.
+      - name: Configure optional Apple signing
+        if: matrix.platform == 'macos-latest'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CERT" ]; then
+            echo "APPLE_CERTIFICATE=$CERT" >> "$GITHUB_ENV"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$ID" ]; then
+            echo "APPLE_ID=$ID" >> "$GITHUB_ENV"
+            echo "APPLE_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+            echo "APPLE_TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MACOSX_DEPLOYMENT_TARGET: '10.15'
-          # macOS signing: falls back to ad-hoc ('-') when no Developer ID secret
-          # is configured. Set these repo secrets for real, notarizable signing.
+          # macOS signing: ad-hoc ('-') unless a Developer ID identity is set.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Tauri updater signing (only needed when the updater is enabled). Left
           # unset, the build still succeeds; it just produces no update signature.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
