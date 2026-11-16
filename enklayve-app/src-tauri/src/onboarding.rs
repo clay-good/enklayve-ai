@@ -92,12 +92,38 @@ pub fn init_onboarding_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn paths(app_handle: &AppHandle) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    Ok((
+        crate::database::get_data_dir(app_handle)?,
+        crate::database::get_database_path(app_handle)?,
+    ))
+}
+
 pub fn get_onboarding_state(app_handle: &AppHandle) -> Result<OnboardingState> {
+    let (dir, _) = paths(app_handle)?;
+    let vault = crate::vault::load_config(&dir)?;
+
+    // Encrypted and locked: the onboarding table is unreadable. Security is
+    // only switched on during or after onboarding, so report it as done; the
+    // app re-checks after unlock.
+    if let Some(cfg) = &vault {
+        if !crate::vault::is_unlocked() {
+            return Ok(OnboardingState {
+                is_first_run: false,
+                onboarding_completed: true,
+                recommended_model_downloaded: true,
+                security_enabled: true,
+                biometric_enabled: cfg.biometric_enabled,
+                ..OnboardingState::default()
+            });
+        }
+    }
+
     let conn = crate::database::get_connection(app_handle)?;
 
     init_onboarding_table(&conn)?;
 
-    let state = conn.query_row(
+    let mut state = conn.query_row(
         "SELECT is_first_run, onboarding_completed, recommended_model_downloaded, first_launch_timestamp, completion_timestamp,
                 security_enabled, password_hash, encryption_salt, biometric_enabled
          FROM onboarding WHERE id = 1",
@@ -117,7 +143,20 @@ pub fn get_onboarding_state(app_handle: &AppHandle) -> Result<OnboardingState> {
         },
     )?;
 
+    // vault.json is the source of truth; the table columns only describe a
+    // legacy (pre-vault) setup that still needs migrating at unlock.
+    if let Some(cfg) = vault {
+        state.security_enabled = true;
+        state.biometric_enabled = cfg.biometric_enabled;
+    }
+
     Ok(state)
+}
+
+/// Security was set up by a pre-vault version: the database is plaintext and
+/// the password hash lives in the onboarding table.
+fn is_legacy(state: &OnboardingState, dir: &std::path::Path) -> bool {
+    state.security_enabled && state.password_hash.is_some() && !crate::vault::is_enabled(dir)
 }
 
 /// Get security config (safe to expose to frontend - no password hash)
@@ -134,173 +173,122 @@ pub fn get_security_config(app_handle: &AppHandle) -> Result<SecurityConfig> {
     })
 }
 
-/// Setup security with password (called during onboarding or settings)
+/// Turn on security: encrypt the whole database under a key derived from
+/// `password`. The vault stays unlocked for this session.
 pub fn setup_security(
     app_handle: &AppHandle,
     password: &str,
     enable_biometric: bool,
 ) -> Result<()> {
-    let conn = crate::database::get_connection(app_handle)?;
+    let (dir, db_path) = paths(app_handle)?;
 
-    // Generate salt for encryption key derivation
-    let salt = crate::encryption::EncryptionKey::generate_salt();
-    let salt_base64 = BASE64.encode(salt);
-
-    // Hash password for verification
-    let password_hash = crate::encryption::hash_password(password)?;
-
-    conn.execute(
-        "UPDATE onboarding SET security_enabled = 1, password_hash = ?1, encryption_salt = ?2, biometric_enabled = ?3 WHERE id = 1",
-        rusqlite::params![password_hash, salt_base64, if enable_biometric { 1 } else { 0 }],
-    )?;
-
-    // If biometric is enabled, store password in secure storage for biometric unlock
     if enable_biometric {
-        // Store the password encrypted in keychain - biometric will unlock it
+        // The keychain item is what Touch ID / Windows Hello unlocks.
         crate::biometric::store_secure("enklayve_master_password", password.as_bytes())?;
     }
 
-    // Also store encryption salt in secure storage for database encryption
-    crate::biometric::store_secure("db_encryption_salt", &salt)?;
+    crate::vault::enable(&dir, &db_path, password, enable_biometric)?;
 
-    // Initialize encryption support and encrypt existing data
-    crate::encrypted_database::initialize_encryption_support(&conn)?;
-
-    // Create encryption key from password
-    let key = crate::encryption::EncryptionKey::from_password(password, &salt)?;
-
-    // Encrypt existing conversation data
-    let encrypted_count = crate::encrypted_database::migrate_to_encrypted(&conn, &key)?;
-    crate::logger::log_info(&format!("Encrypted {} conversation messages", encrypted_count));
-
-    crate::logger::log_info("Security setup completed with database encryption");
+    crate::logger::log_info("Security setup completed: database encrypted at rest");
     Ok(())
 }
 
-/// Verify password for unlock
-pub fn verify_unlock_password(app_handle: &AppHandle, password: &str) -> Result<bool> {
-    let state = get_onboarding_state(app_handle)?;
+/// Unlock the vault with the password. Returns false for a wrong password.
+/// Also migrates a legacy (pre-vault) setup into the encrypted vault.
+pub fn unlock(app_handle: &AppHandle, password: &str) -> Result<bool> {
+    let (dir, db_path) = paths(app_handle)?;
 
-    match state.password_hash {
-        Some(hash) => crate::encryption::verify_password(password, &hash),
-        None => Ok(false),
-    }
-}
-
-/// Get encryption key from password (used for database encryption)
-pub fn get_encryption_key(app_handle: &AppHandle, password: &str) -> Result<crate::encryption::EncryptionKey> {
-    let state = get_onboarding_state(app_handle)?;
-
-    let salt_base64 = state.encryption_salt
-        .ok_or_else(|| anyhow::anyhow!("No encryption salt configured"))?;
-
-    let salt_bytes = BASE64.decode(&salt_base64)
-        .map_err(|e| anyhow::anyhow!("Invalid salt encoding: {}", e))?;
-
-    let salt: [u8; 16] = salt_bytes.try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid salt length"))?;
-
-    crate::encryption::EncryptionKey::from_password(password, &salt)
-}
-
-/// Disable security (requires current password)
-pub fn disable_security(app_handle: &AppHandle, current_password: &str) -> Result<()> {
-    // Verify current password first
-    if !verify_unlock_password(app_handle, current_password)? {
-        anyhow::bail!("Invalid password");
+    if crate::vault::is_enabled(&dir) || crate::vault::has_pending(&dir) {
+        return crate::vault::unlock(&dir, &db_path, password);
     }
 
+    let state = get_onboarding_state(app_handle)?;
+    if !is_legacy(&state, &dir) {
+        anyhow::bail!("Security is not enabled");
+    }
+    let hash = state.password_hash.clone().unwrap_or_default();
+    if !crate::encryption::verify_password(password, &hash)? {
+        return Ok(false);
+    }
+
+    // Legacy: restore the messages the old scheme left unreadable, clear the
+    // old columns, then encrypt the whole database.
     let conn = crate::database::get_connection(app_handle)?;
-
-    // Decrypt database before disabling security
-    let state = get_onboarding_state(app_handle)?;
-    if let Some(salt_base64) = &state.encryption_salt {
-        let salt_bytes = BASE64.decode(salt_base64)
-            .map_err(|e| anyhow::anyhow!("Invalid salt encoding: {}", e))?;
-
-        if salt_bytes.len() >= 16 {
-            let salt: [u8; 16] = salt_bytes[..16].try_into()
-                .map_err(|_| anyhow::anyhow!("Invalid salt length"))?;
-
-            let key = crate::encryption::EncryptionKey::from_password(current_password, &salt)?;
-
-            // Decrypt all encrypted data
-            let decrypted_count = crate::encrypted_database::migrate_to_unencrypted(&conn, &key)?;
-            crate::logger::log_info(&format!("Decrypted {} conversation messages", decrypted_count));
-        }
+    crate::encrypted_database::initialize_encryption_support(&conn)?;
+    if let Some(salt_b64) = &state.encryption_salt {
+        let salt: [u8; 16] = BASE64
+            .decode(salt_b64)
+            .map_err(|e| anyhow::anyhow!("Invalid salt encoding: {}", e))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid salt length"))?;
+        let key = crate::encryption::EncryptionKey::from_password(password, &salt)?;
+        let n = crate::encrypted_database::restore_legacy_messages(&conn, &key)?;
+        crate::logger::log_info(&format!("Restored {} legacy-encrypted messages", n));
     }
-
     conn.execute(
-        "UPDATE onboarding SET security_enabled = 0, password_hash = NULL, encryption_salt = NULL, biometric_enabled = 0 WHERE id = 1",
+        "UPDATE onboarding SET security_enabled = 0, password_hash = NULL, encryption_salt = NULL WHERE id = 1",
         [],
     )?;
+    drop(conn);
 
-    crate::logger::log_info("Security disabled and data decrypted");
+    crate::vault::enable(&dir, &db_path, password, state.biometric_enabled)?;
+    crate::logger::log_info("Migrated legacy security setup to an encrypted database");
+    Ok(true)
+}
+
+/// Disable security: decrypt the database back to plain SQLite.
+pub fn disable_security(app_handle: &AppHandle, current_password: &str) -> Result<()> {
+    let (dir, db_path) = paths(app_handle)?;
+    if !crate::vault::is_enabled(&dir) {
+        anyhow::bail!("Security is not enabled");
+    }
+    crate::vault::disable(&dir, &db_path, current_password)?;
+    let _ = crate::biometric::store_secure("enklayve_master_password", b"");
+    crate::logger::log_info("Security disabled; database decrypted");
     Ok(())
 }
 
-/// Change password (requires current password)
+/// Change password: re-encrypt the database under a key from the new password.
 pub fn change_password(
     app_handle: &AppHandle,
     current_password: &str,
     new_password: &str,
 ) -> Result<()> {
-    // Verify current password first
-    if !verify_unlock_password(app_handle, current_password)? {
-        anyhow::bail!("Invalid current password");
-    }
+    let (dir, db_path) = paths(app_handle)?;
+    let biometric = crate::vault::load_config(&dir)?
+        .map(|c| c.biometric_enabled)
+        .unwrap_or(false);
 
-    let conn = crate::database::get_connection(app_handle)?;
+    crate::vault::change_password(&dir, &db_path, current_password, new_password)?;
 
-    // Generate new salt
-    let salt = crate::encryption::EncryptionKey::generate_salt();
-    let salt_base64 = BASE64.encode(salt);
-
-    // Hash new password
-    let password_hash = crate::encryption::hash_password(new_password)?;
-
-    conn.execute(
-        "UPDATE onboarding SET password_hash = ?1, encryption_salt = ?2 WHERE id = 1",
-        rusqlite::params![password_hash, salt_base64],
-    )?;
-
-    // Update biometric storage if enabled
-    let state = get_onboarding_state(app_handle)?;
-    if state.biometric_enabled {
+    if biometric {
         crate::biometric::store_secure("enklayve_master_password", new_password.as_bytes())?;
     }
 
-    crate::logger::log_info("Password changed successfully");
+    crate::logger::log_info("Password changed; database re-encrypted");
     Ok(())
 }
 
-/// Toggle biometric authentication (requires current password to enable)
+/// Toggle biometric authentication (requires current password)
 pub fn toggle_biometric(
     app_handle: &AppHandle,
     current_password: &str,
     enable: bool,
 ) -> Result<()> {
-    // Verify current password first
-    if !verify_unlock_password(app_handle, current_password)? {
+    let (dir, _) = paths(app_handle)?;
+    if !crate::vault::verify_password(&dir, current_password)? {
         anyhow::bail!("Invalid password");
     }
 
-    let conn = crate::database::get_connection(app_handle)?;
-
     if enable {
-        // Store password in keychain for biometric unlock
         crate::biometric::store_secure("enklayve_master_password", current_password.as_bytes())?;
-        crate::logger::log_info("Biometric authentication enabled");
     } else {
-        // We don't need to remove from keychain - just disable the flag
-        crate::logger::log_info("Biometric authentication disabled");
+        // Overwrite the keychain copy so the password no longer sits there.
+        let _ = crate::biometric::store_secure("enklayve_master_password", b"");
     }
 
-    conn.execute(
-        "UPDATE onboarding SET biometric_enabled = ?1 WHERE id = 1",
-        rusqlite::params![if enable { 1 } else { 0 }],
-    )?;
-
+    crate::vault::set_biometric(&dir, enable)?;
+    crate::logger::log_info(if enable { "Biometric authentication enabled" } else { "Biometric authentication disabled" });
     Ok(())
 }
 

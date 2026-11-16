@@ -12,10 +12,21 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let conn = Connection::open(&db_path)?;
+    // Finish any encryption on/off/rekey interrupted by a crash (the cases
+    // that need no password; the rest settle at unlock).
+    let dir = get_data_dir(app_handle)?;
+    if let Err(e) = crate::vault::resolve_pending(&dir, &db_path, None) {
+        crate::logger::log_error(&format!("Vault recovery check failed: {}", e));
+    }
 
-    // Crash-resilient, concurrent-friendly connection settings.
-    apply_pragmas(&conn)?;
+    // An encrypted database can't be opened until the user unlocks; the
+    // unlock command runs this again with the key in memory.
+    if crate::vault::is_enabled(&dir) && !crate::vault::is_unlocked() {
+        crate::logger::log_info("Database is encrypted and locked; schema setup deferred until unlock");
+        return Ok(());
+    }
+
+    let conn = get_connection(app_handle)?;
 
     // Create documents table
     conn.execute(
@@ -166,6 +177,14 @@ pub async fn init_database(app_handle: &AppHandle) -> Result<()> {
     Ok(())
 }
 
+/// The app data directory (holds the database and vault.json).
+pub fn get_data_dir(app_handle: &AppHandle) -> Result<PathBuf> {
+    app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to get app data directory: {}", e))
+}
+
 /// Get the path to the database file
 pub fn get_database_path(app_handle: &AppHandle) -> Result<PathBuf> {
     let app_data_dir = app_handle
@@ -192,7 +211,7 @@ fn apply_pragmas(conn: &Connection) -> Result<()> {
 
 pub fn get_connection(app_handle: &AppHandle) -> Result<Connection> {
     let db_path = get_database_path(app_handle)?;
-    let conn = Connection::open(db_path)?;
+    let conn = crate::vault::open_connection(&get_data_dir(app_handle)?, &db_path)?;
     apply_pragmas(&conn)?;
     Ok(conn)
 }

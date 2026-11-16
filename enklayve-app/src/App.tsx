@@ -328,8 +328,21 @@ function App() {
     }
   }
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
     setIsLocked(false);
+    // The onboarding record is inside the encrypted database, so it can only
+    // be read now. Resume onboarding if it was left unfinished.
+    try {
+      const state = await invoke<OnboardingState>("check_first_run");
+      if (state.is_first_run && !state.onboarding_completed) {
+        setShowOnboarding(true);
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to check onboarding after unlock:", error);
+    }
+    // Settings stored in the database couldn't be read while locked.
+    invoke<string>("get_web_access").then(setWebAccess).catch(() => {});
     // Load data after unlock
     loadDocuments();
     loadConversations();
@@ -905,6 +918,8 @@ function App() {
 
   const handleBackupComplete = (success: boolean, message: string) => {
     if (success && message.includes('restored')) {
+      // A restored encrypted backup needs its own password: re-check the lock.
+      checkOnboarding();
       loadDocuments();
       loadConversations();
     }

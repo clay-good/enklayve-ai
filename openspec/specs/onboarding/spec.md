@@ -49,3 +49,17 @@ be required at any point in the default flow.
 - **WHEN** the model is ready
 - **THEN** the user can immediately type a question or drop a file, with no
   further setup screens between them and a response
+
+## Decisions
+
+### Encrypt the whole database with SQLCipher instead of per-column AES-GCM
+
+**Status:** Auto-accepted (unreviewed)
+**Date:** 2026-11-16
+**ID:** 5bf3caba
+
+
+
+Per-column encryption could not cover the FTS index, titles, embeddings or the WAL and was only half wired (messages shown as placeholders, new data plaintext). SQLCipher encrypts every page; Argon2id-derived raw key held in memory only; vault.json holds salt + key check; rekey via sqlcipher_export with a pending marker for crash recovery.
+
+**Consequences:** 

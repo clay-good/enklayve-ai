@@ -5,20 +5,35 @@
 Enklayve's wedge is that it treats your data like a vault, not a product.
 Documents, embeddings, and conversations are encrypted at rest; access is gated
 by biometrics; nothing leaves the device without explicit opt-in. This capability
-is already partly built (AES-256-GCM, Argon2, biometric unlock) and is restated
-here as the standing contract.
+is built (SQLCipher whole-database encryption, Argon2id, biometric unlock) and is
+restated here as the standing contract.
 
 ## Requirements
 
 ### Requirement: All user content SHALL be encrypted at rest
 
-Documents, extracted text, embeddings, and conversation history SHALL be stored
-encrypted with AES-256-GCM, with keys derived via Argon2 from the user's secret
-and never written to disk in plaintext.
+When security is on, the whole database (documents' extracted text, embeddings,
+the full-text index, conversation titles and messages, settings, and the WAL)
+SHALL be a SQLCipher database: AES-256 page encryption with HMAC-SHA512 page
+authentication. The 256-bit key SHALL be derived with Argon2id from the user's
+password and held only in memory while unlocked; it SHALL never be written to
+disk. `vault.json` beside the database holds only the salt, a key-check value
+and the biometric flag. Log files SHALL NOT contain message or document text.
 
 #### Scenario: Data on disk is unreadable without the key
 - **WHEN** an attacker copies the app's data directory
 - **THEN** no document text, embedding, or message is readable without the key
+
+#### Scenario: Changing the password re-encrypts
+- **WHEN** the user changes their password
+- **THEN** the database is rewritten under a new key and the old password no
+  longer opens it
+
+#### Scenario: Interrupted rekey is recoverable
+- **WHEN** the app crashes while turning encryption on/off or changing the
+  password
+- **THEN** the next start or unlock finishes or rolls back the change with no
+  data loss
 
 ### Requirement: Access SHALL be gated by biometric unlock where available
 

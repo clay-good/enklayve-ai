@@ -4,7 +4,6 @@ use crate::downloads::{DownloadedModelInfo, DownloadInfo, ModelDownloader};
 use crate::hardware::HardwareProfile;
 use crate::encryption;
 use crate::biometric;
-use crate::encrypted_database;
 use crate::database;
 use crate::conversations;
 use crate::settings;
@@ -516,7 +515,7 @@ pub async fn query_documents(
     app_handle: tauri::AppHandle,
     model_cache: tauri::State<'_, crate::model_cache::ModelCache>,
 ) -> Result<String, String> {
-    crate::logger::log_info(&format!("Query received: {}", question));
+    crate::logger::log_info(&format!("Query received ({} chars)", question.len()));
     crate::logger::log_info(&format!("Model path: {:?}", model_path));
     crate::logger::log_info(&format!("Conversation ID: {:?}", conversation_id));
 
@@ -761,7 +760,7 @@ pub async fn query_documents_streaming(
     window: tauri::Window,
     model_cache: tauri::State<'_, crate::model_cache::ModelCache>,
 ) -> Result<String, String> {
-    crate::logger::log_info(&format!("Streaming query received: {}", question));
+    crate::logger::log_info(&format!("Streaming query received ({} chars)", question.len()));
 
     // Documents are scoped to the current conversation (no cross-chat bleed).
     let has_documents = match conversation_id {
@@ -1089,134 +1088,6 @@ pub fn retrieve_secure_data(key: String) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
-/// Get encryption statistics for database
-#[tauri::command]
-pub async fn get_encryption_stats(app_handle: tauri::AppHandle) -> Result<(usize, usize), String> {
-    let db_path = database::get_database_path(&app_handle)
-        .map_err(|e| e.to_string())?;
-
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| e.to_string())?;
-
-    encrypted_database::get_encryption_stats(&conn)
-        .map_err(|e| e.to_string())
-}
-
-/// Enable database encryption (migrate existing data)
-#[tauri::command]
-pub async fn enable_database_encryption(
-    app_handle: tauri::AppHandle,
-    password: String,
-) -> Result<usize, String> {
-    // FIRST LOG - If you don't see this, the command is not being called from frontend
-    crate::logger::log_info("🔐🔐🔐 ENABLE_DATABASE_ENCRYPTION COMMAND CALLED FROM FRONTEND 🔐🔐🔐");
-    crate::logger::log_info(&format!("Password length: {} characters", password.len()));
-    crate::logger::log_info("Starting conversation encryption...");
-
-    let db_path = database::get_database_path(&app_handle)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to get database path: {}", e));
-            e.to_string()
-        })?;
-
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to open database: {}", e));
-            e.to_string()
-        })?;
-
-    // Initialize encryption support
-    crate::logger::log_info("Initializing encryption support...");
-    encrypted_database::initialize_encryption_support(&conn)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to initialize encryption support: {}", e));
-            e.to_string()
-        })?;
-
-    // Create encryption key
-    crate::logger::log_info("Generating encryption key from password...");
-    let salt = encryption::EncryptionKey::generate_salt();
-    let key = encryption::EncryptionKey::from_password(&password, &salt)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to generate encryption key: {}", e));
-            e.to_string()
-        })?;
-
-    // Store salt securely (with biometric protection if available)
-    crate::logger::log_info("Storing encryption salt securely...");
-    biometric::store_secure("db_encryption_salt", &salt)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to store salt: {}", e));
-            e.to_string()
-        })?;
-
-    // Migrate conversation data to encrypted format
-    crate::logger::log_info("Encrypting conversation messages...");
-    let result = encrypted_database::migrate_to_encrypted(&conn, &key)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to encrypt conversations: {}", e));
-            e.to_string()
-        })?;
-
-    crate::logger::log_info(&format!("✅ Conversation encryption completed. Encrypted {} messages", result));
-    crate::logger::log_info("⚠️  Note: Document chunks are NOT encrypted (planned for future update)");
-    Ok(result)
-}
-
-/// Disable database encryption (migrate back to unencrypted)
-#[tauri::command]
-pub async fn disable_database_encryption(
-    app_handle: tauri::AppHandle,
-    password: String,
-) -> Result<usize, String> {
-    crate::logger::log_info("Starting database decryption...");
-
-    let db_path = database::get_database_path(&app_handle)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to get database path: {}", e));
-            e.to_string()
-        })?;
-
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to open database: {}", e));
-            e.to_string()
-        })?;
-
-    // Retrieve salt
-    crate::logger::log_info("Retrieving encryption salt...");
-    let salt_bytes = biometric::retrieve_secure("db_encryption_salt")
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to retrieve salt: {}", e));
-            e.to_string()
-        })?;
-
-    let salt: [u8; 16] = salt_bytes.try_into()
-        .map_err(|_| {
-            crate::logger::log_error("Invalid salt format");
-            "Invalid salt".to_string()
-        })?;
-
-    // Create encryption key
-    crate::logger::log_info("Deriving encryption key from password...");
-    let key = encryption::EncryptionKey::from_password(&password, &salt)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to derive key: {}", e));
-            e.to_string()
-        })?;
-
-    // Migrate data to unencrypted format
-    crate::logger::log_info("Migrating database to unencrypted format...");
-    let result = encrypted_database::migrate_to_unencrypted(&conn, &key)
-        .map_err(|e| {
-            crate::logger::log_error(&format!("Failed to migrate to unencrypted format: {}", e));
-            e.to_string()
-        })?;
-
-    crate::logger::log_info(&format!("Database decryption completed successfully. Decrypted {} chunks", result));
-    Ok(result)
-}
-
 // ============================================================================
 // SECURITY & AUTHENTICATION COMMANDS
 // ============================================================================
@@ -1249,14 +1120,26 @@ pub async fn setup_security(
     Ok(())
 }
 
-/// Verify password for unlock screen
+/// Unlock the encrypted database with the password (unlock screen).
+/// Returns false for a wrong password.
 #[tauri::command]
 pub async fn verify_unlock_password(
     app_handle: tauri::AppHandle,
     password: String,
 ) -> Result<bool, String> {
-    crate::onboarding::verify_unlock_password(&app_handle, &password)
-        .map_err(|e| e.to_string())
+    let ok = crate::onboarding::unlock(&app_handle, &password).map_err(|e| e.to_string())?;
+    if ok {
+        finish_unlock(&app_handle).await?;
+    }
+    Ok(ok)
+}
+
+/// After the key is in memory: run the schema setup that was deferred while locked.
+async fn finish_unlock(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    database::init_database(app_handle).await.map_err(|e| {
+        crate::logger::log_error(&format!("Database init after unlock failed: {}", e));
+        e.to_string()
+    })
 }
 
 /// Unlock with biometric (Touch ID / Windows Hello)
@@ -1289,18 +1172,25 @@ pub async fn unlock_with_biometric(
         return Ok(false);
     }
 
-    // Biometric passed - the password is stored in keychain for biometric unlock
-    // We don't need to return it, just verify it's accessible
-    match biometric::retrieve_secure("enklayve_master_password") {
-        Ok(_) => {
-            crate::logger::log_info("Biometric unlock successful");
-            Ok(true)
-        }
-        Err(e) => {
-            crate::logger::log_error(&format!("Failed to retrieve password after biometric: {}", e));
-            Err("Biometric authentication succeeded but could not retrieve credentials".to_string())
-        }
+    // Biometric passed: the keychain releases the password, which derives the
+    // database key.
+    let password = biometric::retrieve_secure("enklayve_master_password")
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| {
+            crate::logger::log_error("Failed to retrieve password after biometric");
+            "Biometric authentication succeeded but could not retrieve credentials".to_string()
+        })?;
+    let password = zeroize::Zeroizing::new(password);
+
+    let ok = crate::onboarding::unlock(&app_handle, &password).map_err(|e| e.to_string())?;
+    if !ok {
+        return Err("Stored credentials no longer match. Unlock with your password.".to_string());
     }
+    finish_unlock(&app_handle).await?;
+    crate::logger::log_info("Biometric unlock successful");
+    Ok(true)
 }
 
 /// Disable security (requires current password)

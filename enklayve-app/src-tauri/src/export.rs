@@ -85,7 +85,7 @@ impl ExportManager {
             zip.start_file(&json_filename, options)?;
             zip.write_all(json_content.as_bytes())?;
 
-            crate::logger::log_info(&format!("Exported conversation {}/{}: {}", index + 1, conversations.len(), conversation.title));
+            crate::logger::log_info(&format!("Exported conversation {}/{}", index + 1, conversations.len()));
         }
 
         let export_metadata = ExportMetadata {

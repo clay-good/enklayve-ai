@@ -15,6 +15,7 @@ mod hardware;
 mod encryption;
 mod biometric;
 mod encrypted_database;
+mod vault;
 mod conversations;
 mod settings;
 mod model_cache;
@@ -61,9 +62,6 @@ pub fn run() {
             commands::authenticate_biometric,
             commands::store_secure_data,
             commands::retrieve_secure_data,
-            commands::get_encryption_stats,
-            commands::enable_database_encryption,
-            commands::disable_database_encryption,
             commands::get_security_config,
             commands::setup_security,
             commands::verify_unlock_password,

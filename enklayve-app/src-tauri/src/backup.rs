@@ -44,7 +44,7 @@ impl BackupManager {
         let db_path = crate::database::get_database_path(&self.app_handle)?;
 
         // Get database connection
-        let conn = rusqlite::Connection::open(&db_path)
+        let conn = crate::database::get_connection(&self.app_handle)
             .context("Failed to open database")?;
 
         // Count data for manifest
@@ -80,6 +80,14 @@ impl BackupManager {
         let mut db_file = fs::File::open(&db_path)?;
         std::io::copy(&mut db_file, &mut zip)?;
         crate::logger::log_info("Database backed up successfully");
+
+        // An encrypted database is useless without its salt and key check, so
+        // they travel with it. Restoring still needs the password.
+        let data_dir = crate::database::get_data_dir(&self.app_handle)?;
+        if let Some(vault) = crate::vault::load_config(&data_dir)? {
+            zip.start_file("vault.json", options)?;
+            zip.write_all(serde_json::to_string_pretty(&vault)?.as_bytes())?;
+        }
 
         // Export documents directory
         let app_data_dir = self.app_handle.path().app_data_dir()
@@ -189,13 +197,33 @@ impl BackupManager {
             crate::logger::log_info(&format!("Existing database backed up to: {:?}", backup_db_path));
         }
 
+        // The backup's vault config (or none, for a plaintext backup) must
+        // replace ours, or the restored database can't be opened.
+        let vault: Option<crate::vault::VaultConfig> = match archive.by_name("vault.json") {
+            Ok(f) => Some(serde_json::from_reader(f).context("Invalid vault.json in backup")?),
+            Err(_) => None,
+        };
+
         {
             let mut db_file = archive.by_name("database.db")
                 .context("Database not found in backup")?;
+            for ext in ["db-wal", "db-shm"] {
+                let _ = fs::remove_file(db_path.with_extension(ext));
+            }
             let mut output = fs::File::create(&db_path)?;
             std::io::copy(&mut db_file, &mut output)?;
             crate::logger::log_info("Database restored successfully");
         }
+
+        if vault.is_some() || !crate::vault::is_plaintext_db(&db_path) {
+            crate::vault::replace_config(&app_data_dir, vault.as_ref())?;
+        } else if crate::vault::is_enabled(&app_data_dir) {
+            // Plaintext backup restored while security is on: keep the config;
+            // the next unlock encrypts the restored database.
+            crate::logger::log_info("Plaintext backup restored; it will be encrypted at next unlock");
+        }
+        // The restored database may use a different key: require a fresh unlock.
+        crate::vault::lock();
 
         // Restore documents directory
         let documents_dir = app_data_dir.join("documents");

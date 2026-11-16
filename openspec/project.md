@@ -26,7 +26,7 @@ Enklayve's wedge is the intersection: **dead-simple + secure + capable.**
 
 1. **Dead simple.** Zero setup. The app picks and installs the right model for
    the machine. The user uploads files and chats. That is the whole flow.
-2. **Secure by default.** Encrypted at rest (AES-256-GCM), biometric unlock,
+2. **Secure by default.** Encrypted at rest (SQLCipher, AES-256, Argon2id key), biometric unlock,
    nothing leaves the device unless the user explicitly turns on web access.
 3. **Self-healing.** Failures are expected (bad PDFs, interrupted downloads,
    corrupt indexes, OOM). The app recovers or degrades gracefully and tells the
@@ -43,7 +43,7 @@ Enklayve's wedge is the intersection: **dead-simple + secure + capable.**
 - **Embeddings / retrieval:** fastembed + SQLite vector store + reranker.
 - **Documents:** pdf-extract / lopdf / hayro (PDF), built-in zip + XML reader (DOCX), calamine
   (XLSX/CSV), html2text (HTML), ocrs + rten (OCR).
-- **Storage:** SQLite (rusqlite, bundled), encrypted database layer.
+- **Storage:** SQLite via rusqlite with bundled SQLCipher; whole-database encryption when security is on (`src-tauri/src/vault.rs`).
 - **Release:** GitHub Actions builds and publishes signed installers for all
   four targets (macOS arm64 + x86_64, Windows, Linux) on tag push.
 

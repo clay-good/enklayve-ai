@@ -30,7 +30,7 @@ thiserror = "1"
 chrono = "0.4"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 # Document processing
 pdf-extract = "0.12"
