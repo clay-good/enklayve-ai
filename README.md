@@ -2,34 +2,62 @@
 
 # Enklayve
 
-**A private, local AI assistant for chatting with your documents.**
+**A private AI assistant that runs on your own computer.**
 
-100% on-device · encrypted at rest · no accounts, no telemetry, no API keys.
+No account. No subscription. No API keys.
 
-### [⬇︎ Download the latest release](https://github.com/clay-good/enklayve-ai/releases/latest)
+### [Download the latest release](https://github.com/clay-good/enklayve-ai/releases/latest)
 
 </div>
 
----
+## Why Enklayve
 
-## What it is
+The AI model runs on your machine, so your files and chats stay there too. It works offline, it costs nothing to use, and you can still look things up on the web when you want to.
 
-Enklayve runs a capable AI model entirely on your own machine. Ask questions,
-drop in documents (PDF, DOCX, TXT, MD) to ask about them, and optionally let it
-search the web — your files never leave your device. Everything you do is saved
-and encrypted in the app's own folder. There is nothing to configure.
+- **Ask about your files.** Add PDFs, Word and Excel files, text, web pages, or photos of documents to a chat. Answers point to the file they came from.
+- **Search the web when you choose.** Turn it on for one chat with the globe button. You get current answers with sources, and only your question leaves your computer.
+- **Keep chats separate.** Each chat has its own files and its own web setting.
+- **Lock it.** Add a password if others use your computer.
 
 ## Install
 
-1. **[Download the latest release](https://github.com/clay-good/enklayve-ai/releases/latest)** and pick the file for your OS:
-   - **macOS** — `.dmg` (Apple Silicon & Intel)
-   - **Windows** — `.msi` or `.exe`
-   - **Linux** — `.AppImage` or `.deb`
-2. Open it and follow the short setup.
-3. On first run, Enklayve automatically picks and downloads the right model for
-   your hardware. That's it — start chatting.
+### Mac
 
-> Distributed via GitHub Releases for now. App Store listings may come later.
+1. Download the `.dmg` for your Mac: `aarch64` for Apple Silicon (M1 and newer) or `x64` for Intel.
+2. Open it and drag **enklayve** into **Applications**.
+3. Open **Terminal** and run this once:
+
+   ```bash
+   xattr -cr /Applications/enklayve.app
+   ```
+
+   Enklayve is not notarized by Apple yet, so macOS blocks it the first time. This command clears the download flag that triggers the block.
+4. Open enklayve from Applications.
+
+### Windows
+
+Download the `.exe` and run it. If SmartScreen appears, click **More info**, then **Run anyway**.
+
+### Linux
+
+Download the `.deb`, `.rpm`, or `.AppImage`. To run the AppImage:
+
+```bash
+chmod +x enklayve_*_amd64.AppImage
+./enklayve_*_amd64.AppImage
+```
+
+## Setup
+
+The first time you open Enklayve, it checks your hardware and recommends a model that fits. You can set an optional password, then the model downloads once (about 1 to 9 GB depending on your computer). After that, start a chat.
+
+Enklayve asks once whether to allow web search. You can change it for any chat with the globe button next to the paperclip.
+
+## Privacy
+
+- Your chats and files are stored only on your computer.
+- Web search stays off unless you allow it, and it sends only your question.
+- No accounts and no tracking.
 
 ## Build from source
 
@@ -39,20 +67,10 @@ Requires [Rust](https://rustup.rs) and [Node.js 20+](https://nodejs.org).
 git clone https://github.com/clay-good/enklayve-ai.git
 cd enklayve-ai/enklayve-app
 npm install
-npm run tauri dev      # run locally
-npm run tauri build    # package an installer for your OS
+npm run tauri dev
 ```
 
-## Privacy
-
-Your documents and chats stay on your device, encrypted at rest. Web search,
-when you turn it on, sends only your question — never your documents. No
-telemetry, no tracking, no accounts.
-
-## More
-
-- [Roadmap](ROADMAP.md) · [Releasing](RELEASING.md)
-- Built with [Tauri](https://tauri.app), Rust, and React.
+Run `npm run tauri build` to package an installer. See [RELEASING.md](RELEASING.md) to publish one.
 
 ## License
 
