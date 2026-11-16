@@ -1,6 +1,6 @@
 [package]
 name = "enklayve-app"
-version = "0.1.6"
+version = "0.1.7"
 description = "A secure, private, and personal desktop app for using top LLM models"
 authors = ["Enklayve Contributors"]
 edition = "2021"
