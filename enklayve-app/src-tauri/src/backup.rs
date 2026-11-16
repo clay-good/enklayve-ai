@@ -213,7 +213,14 @@ impl BackupManager {
                 continue;
             };
 
-            if file.name().ends_with('/') {
+            // Never recreate symlinks from an archive: a link entry could point
+            // outside the app's data folder. Backups only ever hold plain files.
+            if file.is_symlink() {
+                crate::logger::log_warn(&format!("Skipping symlink in backup: {:?}", outpath));
+                continue;
+            }
+
+            if file.is_dir() {
                 fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(parent) = outpath.parent() {

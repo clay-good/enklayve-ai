@@ -436,28 +436,14 @@ fn extract_pdf_tables(path: &Path) -> Result<String> {
     Ok(tables_text)
 }
 
-/// Extract text from DOCX, with a raw-XML fallback for files docx-rs rejects.
-///
-/// A .docx is a zip; when the typed parser fails or yields nothing, we read
-/// `word/document.xml` directly. This recovers text from valid-but-unusual
-/// documents that broke ingestion before.
+/// Extract text from DOCX by reading `word/document.xml` straight out of the
+/// zip. (This replaced the `docx-rs` parser, which pinned a vulnerable `zip`.)
 fn extract_docx_text(path: &Path) -> Result<String> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("Could not read the file: {}", path.display()))?;
 
-    // Primary path: the typed parser preserves structure best.
-    match extract_docx_via_docx_rs(&bytes) {
-        Ok(text) if !text.trim().is_empty() => return Ok(text),
-        Ok(_) => crate::logger::log_warn("DOCX parsed but held no text; trying raw-XML fallback"),
-        Err(e) => crate::logger::log_warn(&format!("docx-rs failed ({}); trying raw-XML fallback", e)),
-    }
-
-    // Fallback path: read word/document.xml out of the zip directly.
     match extract_docx_via_xml(&bytes) {
-        Ok(text) if !text.trim().is_empty() => {
-            crate::logger::log_info("Recovered DOCX text via raw-XML fallback");
-            Ok(text)
-        }
+        Ok(text) if !text.trim().is_empty() => Ok(text),
         Ok(_) => anyhow::bail!(
             "This Word document contains no readable text. If it is mostly images or \
              scanned pages, try exporting it to PDF and uploading that instead."
@@ -470,40 +456,27 @@ fn extract_docx_text(path: &Path) -> Result<String> {
     }
 }
 
-/// Primary DOCX extractor using the typed `docx-rs` parser.
-fn extract_docx_via_docx_rs(bytes: &[u8]) -> Result<String> {
-    let docx = docx_rs::read_docx(bytes).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+/// Largest `word/document.xml` we will decompress. Real documents are far
+/// smaller; the cap stops a crafted "zip bomb" from exhausting memory.
+const MAX_DOCX_XML_BYTES: u64 = 64 * 1024 * 1024;
 
-    let mut text = String::new();
-    for child in docx.document.children {
-        if let docx_rs::DocumentChild::Paragraph(para) = child {
-            for para_child in para.children {
-                if let docx_rs::ParagraphChild::Run(run) = para_child {
-                    for run_child in run.children {
-                        if let docx_rs::RunChild::Text(t) = run_child {
-                            text.push_str(&t.text);
-                        }
-                    }
-                }
-            }
-            text.push('\n');
-        }
-    }
-    Ok(text)
-}
-
-/// Fallback DOCX extractor: unzip and read `word/document.xml`.
+/// DOCX extractor: unzip and read `word/document.xml`.
 fn extract_docx_via_xml(bytes: &[u8]) -> Result<String> {
     use std::io::{Cursor, Read};
 
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
         .context("not a valid .docx (zip) file")?;
-    let mut xml = String::new();
-    archive
+    let entry = archive
         .by_name("word/document.xml")
-        .context("missing word/document.xml")?
+        .context("missing word/document.xml")?;
+    let mut xml = String::new();
+    entry
+        .take(MAX_DOCX_XML_BYTES + 1)
         .read_to_string(&mut xml)
         .context("could not read word/document.xml")?;
+    if xml.len() as u64 > MAX_DOCX_XML_BYTES {
+        anyhow::bail!("word/document.xml is too large to read safely");
+    }
 
     Ok(text_from_document_xml(&xml))
 }
@@ -956,3 +929,4 @@ pub async fn delete_document(app_handle: &AppHandle, document_id: i64) -> Result
     conn.execute("DELETE FROM documents WHERE id = ?", [document_id])?;
     Ok(())
 }
+

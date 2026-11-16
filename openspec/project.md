@@ -41,7 +41,7 @@ Enklayve's wedge is the intersection: **dead-simple + secure + capable.**
   access, low memory, strong security posture. No Electron rewrite.
 - **Inference:** llama.cpp (via Rust bindings), GGUF models, Metal/CUDA accel.
 - **Embeddings / retrieval:** fastembed + SQLite vector store + reranker.
-- **Documents:** pdf-extract / lopdf / hayro (PDF), docx-rs (DOCX), calamine
+- **Documents:** pdf-extract / lopdf / hayro (PDF), built-in zip + XML reader (DOCX), calamine
   (XLSX/CSV), html2text (HTML), ocrs + rten (OCR).
 - **Storage:** SQLite (rusqlite, bundled), encrypted database layer.
 - **Release:** GitHub Actions builds and publishes signed installers for all

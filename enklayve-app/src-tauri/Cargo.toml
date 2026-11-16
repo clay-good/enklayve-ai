@@ -34,10 +34,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Document processing
 pdf-extract = "0.12"
-docx-rs = "0.4"
 lopdf = "0.42"
 html2text = "0.12"
-calamine = "0.27"
+calamine = "0.37"
 
 # OCR - Pure Rust implementation (no external dependencies!)
 ocrs = "0.11"
@@ -73,7 +72,7 @@ rayon = "1.10"
 num_cpus = "1.16"
 
 # Backup and restore
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.1", default-features = false, features = ["deflate"] }
 
 # Encryption
 aes-gcm = "0.10"
