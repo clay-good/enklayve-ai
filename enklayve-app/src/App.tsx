@@ -122,6 +122,11 @@ function App() {
   const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
   const [webAccess, setWebAccess] = useState<string>("unasked");
   const [webSearching, setWebSearching] = useState(false);
+  // Web on/off for the chat on screen. Chats that never chose follow the
+  // first-run default (webAccess); a brand-new chat keeps its choice in
+  // chatWebRef until it is created.
+  const [chatWeb, setChatWeb] = useState(false);
+  const chatWebRef = useRef(false);
   // Which conversation (if any) is currently generating, and which one is on
   // screen — so "working" only shows in its own chat, not everywhere.
   const [generatingConvId, setGeneratingConvId] = useState<number | null>(null);
@@ -226,8 +231,37 @@ function App() {
     setWebAccess(value);
   };
 
-  const handleToggleWeb = () => {
-    handleSetWeb(webAccess === "enabled" ? "disabled" : "enabled");
+  useEffect(() => {
+    let cancelled = false;
+    const apply = (on: boolean) => {
+      if (cancelled) return;
+      chatWebRef.current = on;
+      setChatWeb(on);
+    };
+    if (currentConversationId) {
+      invoke<boolean>("get_conversation_web", { conversationId: currentConversationId })
+        .then(apply)
+        .catch(() => apply(webAccess === "enabled"));
+    } else {
+      apply(webAccess === "enabled");
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [currentConversationId, webAccess]);
+
+  const handleToggleChatWeb = async () => {
+    const next = !chatWebRef.current;
+    chatWebRef.current = next;
+    setChatWeb(next);
+    const convId = viewConvRef.current;
+    if (convId) {
+      try {
+        await invoke("set_conversation_web", { conversationId: convId, enabled: next });
+      } catch (error) {
+        console.error("Failed to set web search for this chat:", error);
+      }
+    }
   };
 
   // Keyboard shortcuts: ⌘/Ctrl+N new chat, ⌘/Ctrl+K focus search, Esc stops.
@@ -350,6 +384,8 @@ function App() {
     if (viewConvRef.current) return viewConvRef.current;
     if (currentConversationId) return currentConversationId;
     const newId = await invoke<number>("create_conversation", { title: "New Conversation" });
+    // Keep the web choice made before the chat existed.
+    await invoke("set_conversation_web", { conversationId: newId, enabled: chatWebRef.current }).catch(() => {});
     setCurrentConversationId(newId);
     await loadConversations();
     return newId;
@@ -545,8 +581,14 @@ function App() {
     let accumulatedResponse = "";
     let unlisten: (() => void) | null = null;
     let unlistenComplete: (() => void) | null = null;
+    let unlistenWebFailed: (() => void) | null = null;
+    let webFailed = false;
 
     try {
+      unlistenWebFailed = await listen("web-search-failed", () => {
+        webFailed = true;
+        setWebSearching(false);
+      });
       unlisten = await listen<string>("llm-token", (event) => {
         accumulatedResponse += event.payload;
         accumulatedRef.current = accumulatedResponse;
@@ -562,6 +604,9 @@ function App() {
         conversationId: convId,
       });
 
+      if (accumulatedResponse && accumulatedResponse.trim() && webFailed) {
+        accumulatedResponse = `> **Web search didn't work for this question**, so this answer comes from the model's built-in knowledge and may be out of date.\n\n${accumulatedResponse}`;
+      }
       if (accumulatedResponse && accumulatedResponse.trim()) {
         await invoke("add_message", { conversationId: convId, role: "assistant", content: accumulatedResponse });
         appendAssistantToView(convId, accumulatedResponse);
@@ -606,6 +651,7 @@ function App() {
       setWebSearching(false);
       if (unlisten) unlisten();
       if (unlistenComplete) unlistenComplete();
+      if (unlistenWebFailed) unlistenWebFailed();
       setGeneratingConvId(null);
       setGenStartedAt(null);
       genConvRef.current = null;
@@ -992,8 +1038,6 @@ function App() {
             onBackupComplete={handleBackupComplete}
             onSecuritySettings={() => setShowSecuritySettings(true)}
             securityEnabled={securityEnabled}
-            webAccess={webAccess}
-            onToggleWeb={handleToggleWeb}
             onAbout={() => setShowAbout(true)}
             activeModelName={activeModel?.name}
             modelOptions={modelOptions}
@@ -1007,14 +1051,14 @@ function App() {
         <ChatWindow
           messages={messages}
           question={question}
-          loading={generatingConvId === currentConversationId}
+          loading={generatingConvId !== null && generatingConvId === currentConversationId}
           importing={importConvId !== null}
           genStartedAt={genStartedAt}
           importStartedAt={importStartedAt}
           queued={currentConversationId != null && queuedConvIds.includes(currentConversationId)}
           documents={documents}
-          folderProgress={importConvId === currentConversationId ? folderProgress : null}
-          ocrProgress={importConvId === currentConversationId ? ocrProgress : null}
+          folderProgress={importConvId !== null && importConvId === currentConversationId ? folderProgress : null}
+          ocrProgress={importConvId !== null && importConvId === currentConversationId ? ocrProgress : null}
           onQuestionChange={setQuestion}
           onSubmit={handleAskQuestion}
           onStarterPrompt={(text) => handleAskQuestion(text)}
@@ -1025,7 +1069,9 @@ function App() {
           onAttachFile={handleDocumentUpload}
           onAttachFolder={handleFolderUpload}
           onRemoveDocument={handleDocumentDelete}
-          webSearching={webSearching && generatingConvId === currentConversationId}
+          webSearching={webSearching && generatingConvId !== null && generatingConvId === currentConversationId}
+          webEnabled={chatWeb}
+          onToggleWeb={handleToggleChatWeb}
         />
         {dropActive && (
           <div className="drop-overlay">

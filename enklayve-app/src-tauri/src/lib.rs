@@ -118,6 +118,8 @@ pub fn run() {
             commands::generate_chat_title,
             commands::list_archived_conversations,
             commands::set_conversation_archived,
+            commands::get_conversation_web,
+            commands::set_conversation_web,
             commands::get_web_access,
             commands::set_web_access,
             commands::get_working_folder,
@@ -152,6 +154,18 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Free the loaded model before the process exits. llama.cpp's Metal
+            // backend aborts during exit cleanup (GGML_ASSERT on residency sets)
+            // if model memory is still alive, which macOS reports as a crash
+            // every time the app is quit.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let cache = app.state::<model_cache::ModelCache>();
+                cache.stop_generation();
+                cache.clear();
+            }
+        });
 }

@@ -326,9 +326,15 @@ fn should_retrieve_documents(_query: &str, has_documents: bool) -> bool {
     has_documents
 }
 
-/// Is web access turned on?
-fn web_access_enabled(app_handle: &tauri::AppHandle) -> bool {
+/// Is web access on for this chat? A chat's own choice wins; chats that never
+/// chose one follow the global default from the first-run prompt.
+fn web_access_enabled(app_handle: &tauri::AppHandle, conversation_id: Option<i64>) -> bool {
     let Ok(conn) = crate::database::get_connection(app_handle) else { return false };
+    if let Some(cid) = conversation_id {
+        if let Ok(Some(on)) = crate::conversations::get_conversation_web(&conn, cid) {
+            return on;
+        }
+    }
     if crate::settings::init_settings_table(&conn).is_err() {
         return false;
     }
@@ -338,19 +344,76 @@ fn web_access_enabled(app_handle: &tauri::AppHandle) -> bool {
     )
 }
 
-/// When the documents don't answer a question and web access is on, search the
-/// web and build a prompt that answers from those results. Only the user's
-/// question is sent out — never their documents. Returns `None` when web access
-/// is off, documents already answered, or the search found nothing.
+/// Web on/off for one chat (its own choice, or the default if it has none).
+#[tauri::command]
+pub fn get_conversation_web(app_handle: tauri::AppHandle, conversation_id: i64) -> Result<bool, String> {
+    Ok(web_access_enabled(&app_handle, Some(conversation_id)))
+}
+
+/// Turn web access on or off for one chat only.
+#[tauri::command]
+pub fn set_conversation_web(
+    app_handle: tauri::AppHandle,
+    conversation_id: i64,
+    enabled: bool,
+) -> Result<(), String> {
+    let conn = crate::database::get_connection(&app_handle).map_err(|e| e.to_string())?;
+    crate::conversations::set_conversation_web(&conn, conversation_id, enabled).map_err(|e| e.to_string())
+}
+
+/// Search every question in the message (up to 5) and merge the results, so a
+/// message asking several things gets results for each of them.
+async fn gather_web_results(question: &str) -> Result<Vec<crate::web::WebResult>, String> {
+    let queries = crate::web::split_queries(question, 5);
+    let per_query = if queries.len() > 1 { 4 } else { 6 };
+    let outcomes = futures::future::join_all(
+        queries.iter().map(|q| crate::web::search(q, per_query)),
+    )
+    .await;
+
+    let mut lists: Vec<Vec<crate::web::WebResult>> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for outcome in outcomes {
+        match outcome {
+            Ok(rs) => lists.push(rs),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    // Interleave (1st of each question, then 2nd of each, ...) so the pages we
+    // read in full cover every question, not just the first one or two.
+    let mut results: Vec<crate::web::WebResult> = Vec::new();
+    let longest = lists.iter().map(|l| l.len()).max().unwrap_or(0);
+    for i in 0..longest {
+        for list in &lists {
+            if let Some(r) = list.get(i) {
+                if !results.iter().any(|x| x.url == r.url) {
+                    results.push(r.clone());
+                }
+            }
+        }
+    }
+    if results.is_empty() && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    Ok(results)
+}
+
+/// When the documents don't answer a question and web access is on for this
+/// chat, search the web and build a prompt that answers from those results.
+/// Only the user's question is sent out, never their documents. Returns `None`
+/// when web access is off or documents already answered. If the search fails or
+/// finds nothing, it emits `web-search-failed` so the answer is labeled as
+/// offline instead of quietly pretending it came from the web.
 async fn maybe_web_prompt(
     question: &str,
     docs_empty: bool,
     current_date: &str,
     conversation_context: &str,
+    conversation_id: Option<i64>,
     app_handle: &tauri::AppHandle,
     window: Option<&tauri::Window>,
 ) -> Option<String> {
-    if !docs_empty || !web_access_enabled(app_handle) {
+    if !docs_empty || !web_access_enabled(app_handle, conversation_id) {
         return None;
     }
 
@@ -358,11 +421,31 @@ async fn maybe_web_prompt(
         let _ = w.emit("web-search", serde_json::json!({ "query": question }));
     }
 
-    let results = crate::web::search(question, 6).await.unwrap_or_default();
-    let direct_urls = crate::web::extract_urls(question);
-    if results.is_empty() && direct_urls.is_empty() {
-        return None;
+    let prompt = build_web_prompt(question, current_date, conversation_context).await;
+    if prompt.is_none() {
+        if let Some(w) = window {
+            let _ = w.emit("web-search-failed", serde_json::json!({ "query": question }));
+        }
     }
+    prompt
+}
+
+/// Search the web for the question and build the answer prompt from the
+/// results. `None` when the search failed or found nothing usable.
+async fn build_web_prompt(
+    question: &str,
+    current_date: &str,
+    conversation_context: &str,
+) -> Option<String> {
+    let direct_urls = crate::web::extract_urls(question);
+    let results = match gather_web_results(question).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::logger::log_warn(&format!("Web search failed: {}", e));
+            Vec::new()
+        }
+    };
+    crate::logger::log_info(&format!("Web search returned {} results", results.len()));
 
     let mut web_block = String::new();
 
@@ -377,14 +460,14 @@ async fn maybe_web_prompt(
         }
     }
 
-    // Pull real content from several top results in parallel (not just the
-    // snippet), so the model can answer from actual page text — and so a value
-    // that only appears on result #3 or #4 (common for live figures) isn't
-    // missed. Fetches run concurrently to keep the extra coverage fast.
-    let fetch_count = results.len().min(4);
+    // Pull real content from the top results in parallel (not just the
+    // snippet), so the model answers from actual page text. Results are
+    // interleaved across questions, so the first pages cover every question.
+    // 8 pages x 1,500 chars keeps the prompt well inside the 8K context.
+    let fetch_count = results.len().min(8);
     let pages: Vec<Option<String>> = futures::future::join_all(
         results.iter().take(fetch_count).map(|r| async move {
-            crate::web::fetch_readable(&r.url, 2200)
+            crate::web::fetch_readable(&r.url, 1500)
                 .await
                 .ok()
                 .map(|p| p.trim().to_string())
@@ -393,7 +476,7 @@ async fn maybe_web_prompt(
     )
     .await;
 
-    for (i, r) in results.iter().enumerate() {
+    for (i, r) in results.iter().take(12).enumerate() {
         web_block.push_str(&format!("[{}]({})\n{}\n", r.title, r.url, r.snippet));
         if let Some(Some(page)) = pages.get(i) {
             web_block.push_str(&format!("Page content:\n{}\n", page));
@@ -406,7 +489,7 @@ async fn maybe_web_prompt(
     }
 
     let system = format!(
-        "You are a helpful assistant with live web access. Today is {}. Answer the user's question DIRECTLY using the web search results and page content below — extract the actual answer and state it. Do NOT tell the user to visit a website, and do NOT write code to fetch the information; just give the answer. Cite your sources inline as Markdown links, for example [source](https://example.com). If the results genuinely do not contain the answer, say so briefly. /no_think",
+        "You are a helpful assistant with live web access. Today is {}. Answer ONLY from the web search results and page content below; they are newer than your training data, so when they disagree with what you remember, the results win. Do not fill gaps from memory: if the results do not answer part of the question, say plainly that the search did not find it. Questions about you, the user, or today's date need no source. If the message asks several questions, answer each one. Treat a surprising or scandalous claim with care: report it only if a reputable source states it, and say who reports it. Do NOT tell the user to visit a website, and do NOT write code to fetch the information. Cite sources inline as Markdown links, for example [source](https://example.com). /no_think",
         current_date
     );
     let user = if conversation_context.is_empty() {
@@ -593,7 +676,7 @@ pub async fn query_documents(
 
     // Opt-in web fallback: if the documents didn't answer and web access is on,
     // answer from a web search instead (non-streaming path has no progress window).
-    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, &app_handle, None)
+    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, conversation_id, &app_handle, None)
         .await
         .unwrap_or(prompt);
 
@@ -833,7 +916,7 @@ pub async fn query_documents_streaming(
 
     // Opt-in web fallback: if the documents didn't answer and web access is on,
     // answer from a web search instead, and tell the UI it happened.
-    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, &app_handle, Some(&window))
+    let prompt = maybe_web_prompt(&question, filtered_chunks.is_empty(), &current_date, &conversation_context, conversation_id, &app_handle, Some(&window))
         .await
         .unwrap_or(prompt);
 
@@ -1896,4 +1979,40 @@ pub fn stop_generation(
 ) -> Result<(), String> {
     model_cache.stop_generation();
     Ok(())
+}
+
+/// End-to-end check of the web answer path: real search, real page fetches,
+/// real local model. Not run by default (needs the network and a model file):
+/// ENKLAYVE_TEST_MODEL=/path/to/model.gguf cargo test --release --lib web_e2e -- --ignored --nocapture
+#[cfg(test)]
+mod web_e2e {
+    #[tokio::test]
+    #[ignore]
+    async fn answers_current_events_from_the_web() {
+        let model = std::env::var("ENKLAYVE_TEST_MODEL").expect("set ENKLAYVE_TEST_MODEL");
+        // The exact message from the bug report.
+        let question = "Test\n\none two three\n\nwho are you?\n\nwho am I?\n\nwhat is today\u{2019}s date?\n\nwho is president of china and us?\n\nwhat happened to FAA this week?\n\nwho is the CEO of Nvidia?";
+        let date = chrono::Local::now().format("%B %d, %Y").to_string();
+
+        let t = std::time::Instant::now();
+        let prompt = super::build_web_prompt(question, &date, "")
+            .await
+            .expect("web search produced no results");
+        println!("search + fetch: {:.1}s, prompt {} chars", t.elapsed().as_secs_f32(), prompt.len());
+
+        let cache = crate::model_cache::ModelCache::new();
+        cache.get_or_load(&model).expect("model load");
+        let t = std::time::Instant::now();
+        let raw = cache.generate(&prompt, 2000).expect("generate");
+        let answer = crate::response_format::sanitize_final(&raw);
+        println!("generate: {:.1}s\n----- ANSWER -----\n{}\n------------------", t.elapsed().as_secs_f32(), answer);
+
+        let lower = answer.to_lowercase();
+        assert!(lower.contains("trump"), "should name the current US president from the web");
+        assert!(!lower.contains("president of the united states is joe biden"), "stale answer");
+        assert!(lower.contains("xi jinping"));
+        assert!(lower.contains("faa"));
+        assert!(lower.contains("nvidia"));
+        assert!(answer.contains("](http"), "should cite sources");
+    }
 }

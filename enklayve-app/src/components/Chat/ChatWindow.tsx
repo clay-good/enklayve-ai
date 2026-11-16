@@ -12,6 +12,10 @@ const svgProps = {
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
 };
+const IconGlobe = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18" /><path d="M12 3a15 15 0 0 0 0 18" /></svg>
+);
+
 const IconPaperclip = () => (
   <svg {...svgProps}><path d="M21.4 11.1l-8.5 8.5a5 5 0 0 1-7-7l8.5-8.5a3 3 0 0 1 4.3 4.3l-8.5 8.5a1 1 0 0 1-1.4-1.4l7.8-7.8" /></svg>
 );
@@ -84,6 +88,9 @@ interface ChatWindowProps {
   onAttachFolder?: () => void;
   onRemoveDocument?: (id: number) => void;
   webSearching?: boolean;
+  /** Web search on/off for this chat only. */
+  webEnabled?: boolean;
+  onToggleWeb?: () => void;
   queued?: boolean;
   /** True only while a file/folder import is actually running (anywhere). We
    *  block starting a second import, but never block on another chat answering. */
@@ -111,6 +118,8 @@ export function ChatWindow({
   onAttachFolder,
   onRemoveDocument,
   webSearching = false,
+  webEnabled = false,
+  onToggleWeb,
   queued = false,
   importing = false,
   genStartedAt = null,
@@ -315,6 +324,17 @@ export function ChatWindow({
               </>
             )}
           </div>
+          {onToggleWeb && (
+            <button
+              className={`attach-button web-toggle ${webEnabled ? 'is-on' : ''}`}
+              onClick={onToggleWeb}
+              title={webEnabled ? "Web search is on for this chat" : "Web search is off for this chat (local only)"}
+              aria-label="Web search for this chat"
+              aria-pressed={webEnabled}
+            >
+              <IconGlobe />
+            </button>
+          )}
           <textarea
             ref={textareaRef}
             className="chat-input"

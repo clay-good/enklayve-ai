@@ -62,6 +62,10 @@ pub fn init_conversation_tables(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    // Per-chat web access: NULL means "use the global default".
+    if !conv_cols.contains(&"web_enabled".to_string()) {
+        conn.execute("ALTER TABLE conversations ADD COLUMN web_enabled INTEGER", [])?;
+    }
 
     // Create messages table
     conn.execute(
@@ -270,6 +274,25 @@ pub fn set_conversation_archived(conn: &Connection, id: i64, archived: bool) -> 
     conn.execute(
         "UPDATE conversations SET archived = ?1 WHERE id = ?2",
         rusqlite::params![if archived { 1 } else { 0 }, id],
+    )?;
+    Ok(())
+}
+
+/// This chat's own web on/off choice, or `None` if it never set one.
+pub fn get_conversation_web(conn: &Connection, id: i64) -> Result<Option<bool>> {
+    let v: Option<i64> = conn.query_row(
+        "SELECT web_enabled FROM conversations WHERE id = ?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
+    Ok(v.map(|n| n != 0))
+}
+
+/// Turn web access on or off for one chat only.
+pub fn set_conversation_web(conn: &Connection, id: i64, enabled: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE conversations SET web_enabled = ?1 WHERE id = ?2",
+        rusqlite::params![if enabled { 1 } else { 0 }, id],
     )?;
     Ok(())
 }
@@ -549,6 +572,18 @@ mod tests {
         )?;
         conn.execute("ALTER TABLE messages ADD COLUMN encrypted_content BLOB", [])?;
         Ok(conn)
+    }
+
+    #[test]
+    fn web_setting_is_per_conversation() {
+        let conn = create_test_db().unwrap();
+        let a = create_conversation(&conn, Some("A")).unwrap();
+        let b = create_conversation(&conn, Some("B")).unwrap();
+        assert_eq!(get_conversation_web(&conn, a).unwrap(), None);
+        set_conversation_web(&conn, a, true).unwrap();
+        set_conversation_web(&conn, b, false).unwrap();
+        assert_eq!(get_conversation_web(&conn, a).unwrap(), Some(true));
+        assert_eq!(get_conversation_web(&conn, b).unwrap(), Some(false));
     }
 
     #[test]

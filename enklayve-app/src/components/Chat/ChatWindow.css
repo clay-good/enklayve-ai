@@ -266,6 +266,12 @@
   cursor: not-allowed;
 }
 
+.web-toggle.is-on {
+  color: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 14%, var(--color-bg-tertiary));
+}
+
 .attach-wrap {
   position: relative;
   flex-shrink: 0;
